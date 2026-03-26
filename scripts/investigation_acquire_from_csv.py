@@ -21,17 +21,7 @@ from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from lib.runtime import (
-    OUTPUT_DIR,
-    display_id,
-    is_zero_identifier,
-    load_api_context,
-    normalize_identifier,
-    organization_display_id,
-    organization_filter_id,
-    organization_matches_identifier,
-    unique_filterable_organization_ids,
-)
+from lib.runtime import OUTPUT_DIR, display_id, load_api_context
 
 DEFAULT_POLL_INTERVAL = 10
 TERMINAL_STATUSES = {"completed", "failed", "cancelled", "error"}
@@ -53,16 +43,19 @@ api_post = None
 paginate_get = None
 
 
-def unique_identifiers(values):
-    identifiers = []
-    seen = set()
-    for value in values:
-        normalized = normalize_identifier(value)
-        if not normalized or normalized in seen:
-            continue
-        seen.add(normalized)
-        identifiers.append(normalized)
-    return identifiers
+def has_value(value):
+    return value is not None and value != ""
+
+
+def org_identity(org):
+    for candidate in (
+        org.get("_id"),
+        org.get("id"),
+        org.get("organizationId"),
+    ):
+        if has_value(candidate):
+            return candidate
+    return None
 
 
 def parse_args(argv):
@@ -145,6 +138,15 @@ def decode_delimiter(value):
     return delimiter
 
 
+def validate_org(air_host, api_token, org_id):
+    resp = api_get(air_host, api_token, f"/api/public/organizations/{org_id}")
+    if not resp.ok:
+        raise RuntimeError(
+            f"Could not fetch organization {org_id}: HTTP {resp.status_code} - {resp.text[:500]}"
+        )
+    return resp.json().get("result", resp.json())
+
+
 def list_organizations(air_host, api_token):
     return paginate_get(
         air_host,
@@ -154,70 +156,39 @@ def list_organizations(air_host, api_token):
     )
 
 
-def resolve_org_scope(air_host, api_token, requested_org_id):
-    requested_org_id = normalize_identifier(requested_org_id)
-    if requested_org_id is None:
-        raise RuntimeError("Organization ID is required.")
+def resolve_org(air_host, api_token, requested_org_id):
+    requested_org_id = str(requested_org_id)
+
+    resp = api_get(air_host, api_token, f"/api/public/organizations/{requested_org_id}")
+    if resp.ok:
+        org = resp.json().get("result", resp.json())
+        resolved_org_id = org_identity(org)
+        return org, str(resolved_org_id if has_value(resolved_org_id) else requested_org_id)
 
     organizations = list_organizations(air_host, api_token)
-    matched_orgs = [
-        org for org in organizations if organization_matches_identifier(org, requested_org_id)
+    matched = [
+        org
+        for org in organizations
+        if has_value(org_identity(org)) and str(org_identity(org)) == requested_org_id
     ]
+    if len(matched) == 1:
+        resolved_org_id = org_identity(matched[0])
+        return matched[0], str(resolved_org_id)
 
-    resp = None
-    if not matched_orgs:
-        resp = api_get(air_host, api_token, f"/api/public/organizations/{requested_org_id}")
-        if resp.ok:
-            matched_orgs = [resp.json().get("result", resp.json())]
+    if requested_org_id == "0" and len(organizations) == 1:
+        only_org = organizations[0]
+        resolved_org_id = org_identity(only_org)
+        if has_value(resolved_org_id):
+            return only_org, str(resolved_org_id)
 
-    if requested_org_id != "0" and not matched_orgs:
-        if resp is not None:
-            raise RuntimeError(
-                f"Could not resolve organization {requested_org_id}: "
-                f"HTTP {resp.status_code} - {resp.text[:500]}"
-            )
-        raise RuntimeError(f"Could not resolve organization {requested_org_id}")
-
-    candidate_orgs = matched_orgs
-    if requested_org_id == "0":
-        if not candidate_orgs:
-            candidate_orgs = organizations
-        candidate_filter_ids = unique_filterable_organization_ids(candidate_orgs)
-        if not candidate_filter_ids:
-            candidate_orgs = organizations
-    candidate_filter_ids = unique_filterable_organization_ids(candidate_orgs)
-
-    if not candidate_filter_ids:
-        raise RuntimeError(
-            f"No filterable organization ID found for requested org_id {requested_org_id}."
-        )
-
-    resolved_org = matched_orgs[0] if len(matched_orgs) == 1 else None
-    resolved_org_id = organization_filter_id(resolved_org) if resolved_org else None
-    if resolved_org_id == "0":
-        resolved_org_id = None
-    if not resolved_org_id and len(candidate_filter_ids) == 1:
-        resolved_org_id = candidate_filter_ids[0]
-
-    return {
-        "requestedId": requested_org_id,
-        "org": resolved_org,
-        "matchedOrgs": matched_orgs,
-        "candidateOrgIds": candidate_filter_ids,
-        "resolvedOrgId": resolved_org_id,
-    }
+    raise RuntimeError(
+        f"Could not resolve organization {requested_org_id}: HTTP {resp.status_code} - {resp.text[:500]}"
+    )
 
 
-def get_case_filter_org_id(case):
-    case_org_id = normalize_identifier(case.get("organizationId"))
-    if case_org_id and case_org_id != "0":
-        return case_org_id
-    return None
-
-
-def get_case_by_investigation_id(air_host, api_token, investigation_id, org_ids):
-    for current_org_id in unique_identifiers(org_ids):
-        params = {"filter[organizationIds]": current_org_id}
+def get_case_by_investigation_id(air_host, api_token, investigation_id, org_id):
+    params = {"filter[organizationIds]": org_id}
+    try:
         cases = paginate_get(
             air_host,
             api_token,
@@ -225,15 +196,24 @@ def get_case_by_investigation_id(air_host, api_token, investigation_id, org_ids)
             params=params,
             verbose=False,
         )
-        for case in cases:
-            metadata = case.get("metadata") or {}
-            if str(metadata.get("investigationId")) == str(investigation_id):
-                return case
+    except RuntimeError as exc:
+        if str(org_id) == "0" and "organization" in str(exc).lower():
+            cases = paginate_get(
+                air_host,
+                api_token,
+                "/api/public/cases",
+                verbose=False,
+            )
+        else:
+            raise
+    for case in cases:
+        metadata = case.get("metadata") or {}
+        if metadata.get("investigationId") == investigation_id:
+            return case
     return None
 
 
-def resolve_case(air_host, api_token, org_ids, case_id=None, investigation_id=None):
-    org_ids = unique_identifiers(org_ids)
+def resolve_case(air_host, api_token, org_id, case_id=None, investigation_id=None):
     if case_id:
         resp = api_get(air_host, api_token, f"/api/public/cases/{case_id}")
         if not resp.ok:
@@ -246,19 +226,17 @@ def resolve_case(air_host, api_token, org_ids, case_id=None, investigation_id=No
             air_host,
             api_token,
             investigation_id,
-            org_ids,
+            org_id,
         )
         if not case:
             raise RuntimeError(
-                "Could not find a case "
-                f"for investigation {investigation_id} in org scope {', '.join(org_ids)}"
+                f"Could not find a case in org {org_id} for investigation {investigation_id}"
             )
 
-    case_org_id = get_case_filter_org_id(case)
-    if case_org_id and org_ids and case_org_id not in set(org_ids):
+    case_org_id = case.get("organizationId")
+    if has_value(case_org_id) and str(case_org_id) != str(org_id):
         raise RuntimeError(
-            f"Case {case.get('_id') or case.get('id')} belongs to org {case_org_id}, "
-            f"not {', '.join(org_ids)}"
+            f"Case {case.get('_id') or case.get('id')} belongs to org {case_org_id}, not {org_id}"
         )
     return case
 
@@ -367,71 +345,59 @@ def asset_name(asset):
     return asset.get("name") or asset.get("hostname") or "Unknown"
 
 
-def asset_org_ids(asset):
-    nested_org = asset.get("organization") or {}
-    return unique_identifiers(
-        [
-            asset.get("organizationId"),
-            nested_org.get("organizationId"),
-            nested_org.get("id"),
-            nested_org.get("_id"),
-        ]
-    )
-
-
-def asset_filter_org_id(asset):
-    candidates = asset_org_ids(asset)
-    for candidate in candidates:
-        if candidate != "0":
-            return candidate
-    return candidates[0] if candidates else None
-
-
-def asset_belongs_to_orgs(asset, org_ids):
-    org_ids = set(unique_identifiers(org_ids))
-    if not org_ids:
-        return True
-    candidates = asset_org_ids(asset)
+def asset_belongs_to_org(asset, org_id):
+    candidates = [
+        asset.get("organizationId"),
+        (asset.get("organization") or {}).get("_id"),
+        (asset.get("organization") or {}).get("id"),
+    ]
+    candidates = [value for value in candidates if has_value(value)]
     if not candidates:
         return True
-    return any(candidate in org_ids for candidate in candidates)
+    return any(str(value) == str(org_id) for value in candidates)
 
 
 def compact_asset(asset):
     return {
         "id": asset_id(asset),
         "name": asset_name(asset),
-        "organizationId": asset_filter_org_id(asset),
         "platform": asset.get("platform"),
         "os": asset.get("os"),
         "ipAddress": asset.get("ipAddress"),
     }
 
 
-def resolve_asset_identifier(air_host, api_token, org_ids, identifier):
-    org_ids = unique_identifiers(org_ids)
+def resolve_asset_identifier(air_host, api_token, org_id, identifier):
     direct_asset = None
     resp = api_get(air_host, api_token, f"/api/public/assets/{identifier}")
     if resp.ok:
         candidate = resp.json().get("result", resp.json())
-        if candidate and asset_id(candidate) and asset_belongs_to_orgs(candidate, org_ids):
+        if candidate and asset_id(candidate) and asset_belongs_to_org(candidate, org_id):
             direct_asset = candidate
 
-    search_results = []
-    for current_org_id in org_ids:
-        params = {
-            "filter[organizationIds]": current_org_id,
-            "search": identifier,
-        }
-        search_results.extend(
-            paginate_get(
+    params = {
+        "filter[organizationIds]": org_id,
+        "search": identifier,
+    }
+    try:
+        search_results = paginate_get(
+            air_host,
+            api_token,
+            "/api/public/assets",
+            params=params,
+            verbose=False,
+        )
+    except RuntimeError as exc:
+        if str(org_id) == "0" and "organization" in str(exc).lower():
+            search_results = paginate_get(
                 air_host,
                 api_token,
                 "/api/public/assets",
-                params=params,
+                params={"search": identifier},
                 verbose=False,
             )
-        )
+        else:
+            raise
 
     unique_candidates = []
     seen_asset_ids = set()
@@ -592,7 +558,8 @@ def print_profile_summary(profile):
 
 def build_report_skeleton(
     args,
-    org_scope,
+    resolved_org_id,
+    org,
     case,
     profile,
     identifier_column,
@@ -601,23 +568,14 @@ def build_report_skeleton(
     case_id = case.get("_id") or case.get("id")
     metadata = case.get("metadata") or {}
     profile_id = profile.get("_id") or profile.get("id")
-    resolved_org = org_scope.get("org")
-    candidate_org_ids = org_scope.get("candidateOrgIds") or []
-    resolved_org_id = org_scope.get("resolvedOrgId")
     return {
         "generatedAt": datetime.now(timezone.utc).isoformat(),
         "csvPath": os.path.abspath(csv_path),
         "identifierColumn": identifier_column,
         "org": {
-            "id": resolved_org_id
-            or (candidate_org_ids[0] if len(candidate_org_ids) == 1 else display_id(args.org_id)),
+            "id": org_identity(org) or resolved_org_id,
             "requestedId": args.org_id,
-            "candidateFilterIds": candidate_org_ids,
-            "name": (
-                resolved_org.get("name", "Unknown")
-                if resolved_org
-                else ("Multiple organizations" if len(candidate_org_ids) > 1 else "Unknown")
-            ),
+            "name": org.get("name", "Unknown"),
         },
         "case": {
             "id": case_id,
@@ -654,43 +612,18 @@ def main():
         api_post = runtime_api_post
         paginate_get = runtime_paginate_get
 
-        org_scope = resolve_org_scope(air_host, api_token, args.org_id)
-        org = org_scope["org"]
-        candidate_org_ids = org_scope["candidateOrgIds"]
-        resolved_org_id = org_scope["resolvedOrgId"]
-        if org:
-            print(
-                f"Organization: {org.get('name', 'Unknown')} "
-                f"({organization_display_id(org)})"
-            )
-        else:
-            print("Organization scope: Multiple organizations")
-
-        if resolved_org_id and str(resolved_org_id) != str(args.org_id):
-            print(f"  Requested org_id {args.org_id} -> using org_id {resolved_org_id}")
-        elif is_zero_identifier(args.org_id) and len(candidate_org_ids) > 1:
-            print(
-                f"  Requested org_id {args.org_id} -> searching org_ids "
-                f"{', '.join(candidate_org_ids)}"
-            )
+        org, org_id = resolve_org(air_host, api_token, args.org_id)
+        print(f"Organization: {org.get('name', 'Unknown')} ({org_id})")
+        if str(org_id) != str(args.org_id):
+            print(f"  Requested org_id {args.org_id} resolved to {org_id}")
 
         case = resolve_case(
             air_host,
             api_token,
-            candidate_org_ids,
+            org_id,
             case_id=args.case_id,
             investigation_id=args.investigation_id,
         )
-        effective_org_id = get_case_filter_org_id(case) or resolved_org_id
-        if not effective_org_id:
-            if len(candidate_org_ids) == 1:
-                effective_org_id = candidate_org_ids[0]
-            else:
-                raise RuntimeError(
-                    "Could not determine a filterable organization ID for the target case."
-                )
-        if str(effective_org_id) != str(args.org_id):
-            print(f"  Effective case org_id: {effective_org_id}")
         print_case_summary(case)
         if case.get("status") not in ("open", None):
             print("Warning: target case is not open.", file=sys.stderr)
@@ -715,7 +648,8 @@ def main():
 
         report = build_report_skeleton(
             args,
-            org_scope,
+            org_id,
+            org,
             case,
             profile,
             identifier_column,
@@ -725,7 +659,6 @@ def main():
         resolution_cache = {}
         scheduled_asset_ids = set()
         scheduled = []
-        asset_search_org_ids = unique_identifiers([effective_org_id] + candidate_org_ids)
 
         print()
         print("Validating CSV assets against Binalyze...")
@@ -746,7 +679,7 @@ def main():
                 resolution_cache[identifier] = resolve_asset_identifier(
                     air_host,
                     api_token,
-                    asset_search_org_ids,
+                    org_id,
                     identifier,
                 )
 
@@ -828,7 +761,7 @@ def main():
                 launch_result = assign_acquisition_task(
                     air_host,
                     api_token,
-                    effective_org_id,
+                    org_id,
                     case_id,
                     profile_id,
                     current_asset_id,

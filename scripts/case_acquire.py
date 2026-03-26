@@ -14,23 +14,15 @@ SDK patterns and may need adjustment. The script prints the full request and
 response bodies to aid debugging. Use --dry-run to preview without sending.
 """
 
-import json
 import os
 import sys
+import json
 import time
 from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from lib.runtime import (
-    is_zero_identifier,
-    load_api_context,
-    normalize_identifier,
-    organization_display_id,
-    organization_filter_id,
-    organization_matches_identifier,
-    unique_filterable_organization_ids,
-)
+from lib.runtime import load_api_context
 
 
 DEFAULT_POLL_INTERVAL = 10
@@ -40,147 +32,39 @@ api_post = None
 paginate_get = None
 
 
-def unique_identifiers(values):
-    identifiers = []
-    seen = set()
-    for value in values:
-        normalized = normalize_identifier(value)
-        if not normalized or normalized in seen:
-            continue
-        seen.add(normalized)
-        identifiers.append(normalized)
-    return identifiers
-
-
-def list_organizations(air_host, api_token):
-    return paginate_get(
-        air_host,
-        api_token,
-        "/api/public/organizations",
-        verbose=False,
-    )
-
-
-def resolve_org_scope(air_host, api_token, requested_org_id):
-    requested_org_id = normalize_identifier(requested_org_id)
-    if requested_org_id is None:
-        raise RuntimeError("Organization ID is required.")
-
-    organizations = list_organizations(air_host, api_token)
-    matched_orgs = [
-        org for org in organizations if organization_matches_identifier(org, requested_org_id)
-    ]
-
-    resp = None
-    if not matched_orgs:
-        resp = api_get(air_host, api_token, f"/api/public/organizations/{requested_org_id}")
-        if resp.ok:
-            matched_orgs = [resp.json().get("result", resp.json())]
-
-    if requested_org_id != "0" and not matched_orgs:
-        if resp is not None:
-            raise RuntimeError(
-                f"Could not resolve organization {requested_org_id}: "
-                f"HTTP {resp.status_code} - {resp.text[:500]}"
-            )
-        raise RuntimeError(f"Could not resolve organization {requested_org_id}")
-
-    candidate_orgs = matched_orgs or organizations
-    candidate_org_ids = unique_filterable_organization_ids(candidate_orgs)
-    if requested_org_id == "0" and not candidate_org_ids:
-        candidate_org_ids = unique_filterable_organization_ids(organizations)
-
-    if not candidate_org_ids:
-        raise RuntimeError(
-            f"No filterable organization ID found for requested org_id {requested_org_id}."
-        )
-
-    resolved_org = matched_orgs[0] if len(matched_orgs) == 1 else None
-    resolved_org_id = organization_filter_id(resolved_org) if resolved_org else None
-    if resolved_org_id == "0":
-        resolved_org_id = None
-    if not resolved_org_id and len(candidate_org_ids) == 1:
-        resolved_org_id = candidate_org_ids[0]
-
-    return {
-        "requestedId": requested_org_id,
-        "org": resolved_org,
-        "candidateOrgIds": candidate_org_ids,
-        "resolvedOrgId": resolved_org_id,
-    }
-
-
-def asset_org_ids(asset):
-    nested_org = asset.get("organization") or {}
-    return unique_identifiers(
-        [
-            asset.get("organizationId"),
-            nested_org.get("organizationId"),
-            nested_org.get("id"),
-            nested_org.get("_id"),
-        ]
-    )
-
-
-def asset_filter_org_id(asset):
-    candidates = asset_org_ids(asset)
-    for candidate in candidates:
-        if candidate != "0":
-            return candidate
-    return candidates[0] if candidates else None
-
-
-def asset_belongs_to_orgs(asset, org_ids):
-    org_ids = set(unique_identifiers(org_ids))
-    if not org_ids:
-        return True
-    candidates = asset_org_ids(asset)
-    if not candidates:
-        return True
-    return any(candidate in org_ids for candidate in candidates)
-
-
-def get_case_filter_org_id(case):
-    case_org_id = normalize_identifier(case.get("organizationId"))
-    if case_org_id and case_org_id != "0":
-        return case_org_id
-    return None
-
-
 # ---------------------------------------------------------------------------
 # API helpers
 # ---------------------------------------------------------------------------
-def find_endpoint(air_host, api_token, identifier, org_ids):
+
+def validate_org(air_host, api_token, org_id):
+    resp = api_get(air_host, api_token, f"/api/public/organizations/{org_id}")
+    if not resp.ok:
+        print(f"Error: Could not fetch organization {org_id}: HTTP {resp.status_code}",
+              file=sys.stderr)
+        sys.exit(1)
+    org = resp.json().get("result", resp.json())
+    name = org.get("name", "Unknown")
+    print(f"  Organization: {name} ({org_id})")
+    return org
+
+
+def find_endpoint(air_host, api_token, identifier, org_id):
     """Find an endpoint by name or ID. Tries search first, falls back to direct get."""
-    org_ids = unique_identifiers(org_ids)
     # Try direct ID lookup first
     resp = api_get(air_host, api_token, f"/api/public/assets/{identifier}")
     if resp.ok:
         asset = resp.json().get("result", resp.json())
-        if (asset.get("_id") or asset.get("id") or asset.get("assetId")) and asset_belongs_to_orgs(asset, org_ids):
+        if asset.get("_id"):
             return asset
 
-    assets = []
-    for current_org_id in org_ids:
-        params = {
-            "filter[organizationIds]": current_org_id,
-            "search": identifier,
-        }
-        assets.extend(
-            paginate_get(
-                air_host, api_token, "/api/public/assets", params=params, verbose=False,
-            )
-        )
-    unique_assets = []
-    seen_asset_ids = set()
-    for asset in assets:
-        asset_id = asset.get("_id") or asset.get("id") or asset.get("assetId")
-        if not asset_id or asset_id in seen_asset_ids:
-            continue
-        seen_asset_ids.add(asset_id)
-        unique_assets.append(asset)
-    assets = unique_assets
-
+    # Search by name
+    params = {
+        "filter[organizationIds]": org_id,
+        "search": identifier,
+    }
+    assets = paginate_get(
+        air_host, api_token, "/api/public/assets", params=params, verbose=False,
+    )
     if not assets:
         print(f"Error: No endpoint found matching '{identifier}'", file=sys.stderr)
         sys.exit(1)
@@ -276,13 +160,6 @@ def resolve_case(air_host, api_token, org_id, case_id=None, case_name=None,
         if status not in ("open",):
             print(f"Warning: Case '{case.get('name')}' has status '{status}' (not open).",
                   file=sys.stderr)
-        case_org_id = get_case_filter_org_id(case)
-        if case_org_id and str(case_org_id) != str(org_id):
-            print(
-                f"Error: Case '{case.get('name')}' belongs to org {case_org_id}, not {org_id}.",
-                file=sys.stderr,
-            )
-            sys.exit(1)
         return case
 
     if not case_name:
@@ -469,7 +346,7 @@ def main():
         print_usage()
         sys.exit(1)
 
-    requested_org_id = args["org_id"]
+    org_id = args["org_id"]
     endpoint_identifier = args["endpoint"]
 
     try:
@@ -484,46 +361,19 @@ def main():
         api_post = runtime_api_post
         paginate_get = runtime_paginate_get
 
-        # Step 1: Resolve organization scope
+        # Step 1: Validate organization
         print("Validating organization...", flush=True)
-        org_scope = resolve_org_scope(air_host, api_token, requested_org_id)
-        org = org_scope["org"]
-        candidate_org_ids = org_scope["candidateOrgIds"]
-        resolved_org_id = org_scope["resolvedOrgId"]
-        if org:
-            print(
-                f"  Organization: {org.get('name', 'Unknown')} "
-                f"({organization_display_id(org)})"
-            )
-        else:
-            print("  Organization scope: Multiple organizations")
-        if resolved_org_id and str(resolved_org_id) != str(requested_org_id):
-            print(f"  Requested org_id {requested_org_id} -> using org_id {resolved_org_id}")
-        elif is_zero_identifier(requested_org_id) and len(candidate_org_ids) > 1:
-            print(
-                f"  Requested org_id {requested_org_id} -> searching org_ids "
-                f"{', '.join(candidate_org_ids)}"
-            )
+        validate_org(air_host, api_token, org_id)
 
         # Step 2: Find endpoint
         print(f"\nFinding endpoint '{endpoint_identifier}'...", flush=True)
-        asset = find_endpoint(air_host, api_token, endpoint_identifier, candidate_org_ids)
+        asset = find_endpoint(air_host, api_token, endpoint_identifier, org_id)
         endpoint_id = asset.get("_id") or asset.get("id")
         endpoint_name = asset.get("name", "Unknown")
-        effective_org_id = asset_filter_org_id(asset) or resolved_org_id
-        if not effective_org_id:
-            if len(candidate_org_ids) == 1:
-                effective_org_id = candidate_org_ids[0]
-            else:
-                raise RuntimeError(
-                    "Could not determine a filterable organization ID for the selected endpoint."
-                )
         print(f"  Endpoint: {endpoint_name}")
         print(f"  ID:       {endpoint_id}")
         print(f"  OS:       {asset.get('os', 'N/A')} ({asset.get('platform', 'N/A')})")
         print(f"  IP:       {asset.get('ipAddress', 'N/A')}")
-        if str(effective_org_id) != str(requested_org_id):
-            print(f"  Effective endpoint org_id: {effective_org_id}")
 
         # Step 3: Resolve acquisition profile
         print(f"\nResolving acquisition profile...", flush=True)
@@ -539,7 +389,7 @@ def main():
         # Step 4: Resolve case
         print(f"\nResolving case...", flush=True)
         case = resolve_case(
-            air_host, api_token, effective_org_id,
+            air_host, api_token, org_id,
             case_id=args["case_id"],
             case_name=args["case_name"],
             endpoint_name=endpoint_name,
@@ -550,7 +400,7 @@ def main():
 
         # Step 5: Assign acquisition task
         result = assign_acquisition(
-            air_host, api_token, case_id, endpoint_id, profile_id, effective_org_id,
+            air_host, api_token, case_id, endpoint_id, profile_id, org_id,
             dry_run=args["dry_run"],
         )
 

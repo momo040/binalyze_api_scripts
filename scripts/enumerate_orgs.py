@@ -4,11 +4,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from lib.runtime import (
-    organization_candidate_ids,
-    organization_display_id,
-    load_api_context,
-)
+from lib.runtime import load_api_context
 
 
 paginate_get = None
@@ -35,15 +31,9 @@ def main():
 
         print(f"\nFound {len(orgs)} organization(s):")
         for org in orgs:
-            oid = organization_display_id(org)
+            oid = org.get("_id") or org.get("id") or org.get("organizationId")
             name = org.get("name")
-            raw_ids = organization_candidate_ids(org)
-            raw_note = ""
-            if raw_ids and str(oid) not in raw_ids:
-                raw_note = f"  Raw IDs: {', '.join(raw_ids)}"
-            elif raw_ids and raw_ids[0] != str(oid):
-                raw_note = f"  Raw IDs: {', '.join(raw_ids)}"
-            print(f"- ID: {oid}  Name: {name}{raw_note}")
+            print(f"- ID: {oid}  Name: {name}")
     except Exception as exc:
         print(f"Error: {exc}", file=sys.stderr)
         sys.exit(2)

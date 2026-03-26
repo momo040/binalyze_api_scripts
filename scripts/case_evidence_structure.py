@@ -5,20 +5,13 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from lib.runtime import (
-    OUTPUT_DIR,
-    display_id,
-    is_zero_identifier,
-    load_api_context,
-    normalize_identifier,
-    organization_matches_identifier,
-    unique_filterable_organization_ids,
-)
+from lib.runtime import OUTPUT_DIR, display_id, load_api_context
 
 
 api_get = None
 api_post = None
 paginate_get = None
+
 
 def parse_args(argv):
     parser = argparse.ArgumentParser(
@@ -63,22 +56,17 @@ def try_investigation_hub(air_host, api_token, investigation_id):
 
 def get_case_by_investigation_id(air_host, api_token, investigation_id, org_id=None):
     """Find the case associated with this investigation ID."""
-    orgs = paginate_get(
-        air_host, api_token, "/api/public/organizations", verbose=False
-    )
-    if org_id and not is_zero_identifier(org_id):
-        requested_org_id = normalize_identifier(org_id)
-        matched_orgs = [
-            org for org in orgs if organization_matches_identifier(org, requested_org_id)
-        ]
-        if not matched_orgs:
-            raise RuntimeError(f"Could not resolve organization {org_id}")
-        org_ids_to_search = unique_filterable_organization_ids(matched_orgs)
+    if org_id:
+        org_ids_to_search = [org_id]
     else:
-        org_ids_to_search = unique_filterable_organization_ids(orgs)
-
-    if not org_ids_to_search:
-        raise RuntimeError("No filterable organization ID found for case lookup.")
+        orgs = paginate_get(
+            air_host, api_token, "/api/public/organizations", verbose=False
+        )
+        org_ids_to_search = [
+            org.get("_id") or org.get("id") or org.get("organizationId")
+            for org in orgs
+        ]
+        org_ids_to_search = [value for value in org_ids_to_search if value]
 
     for current_org_id in org_ids_to_search:
         params = {"filter[organizationIds]": current_org_id}
@@ -287,10 +275,6 @@ def main():
         case_id = case.get("_id")
         case_org_id = case.get("organizationId")
         print(f"  Found case: {case.get('name')} ({case_id})")
-        if args.org_id and str(case_org_id) != str(args.org_id):
-            print(
-                f"  Requested org_id {args.org_id} -> using org_id {display_id(case_org_id)}"
-            )
 
         print("Fetching case tasks...", flush=True)
         tasks = paginate_get(
