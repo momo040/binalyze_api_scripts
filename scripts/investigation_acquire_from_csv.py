@@ -187,6 +187,7 @@ def resolve_org(air_host, api_token, requested_org_id):
 
 
 def get_case_by_investigation_id(air_host, api_token, investigation_id, org_id):
+    org_id = str(org_id)
     params = {"filter[organizationIds]": org_id}
     try:
         cases = paginate_get(
@@ -197,15 +198,10 @@ def get_case_by_investigation_id(air_host, api_token, investigation_id, org_id):
             verbose=False,
         )
     except RuntimeError as exc:
-        if str(org_id) == "0" and "organization" in str(exc).lower():
-            cases = paginate_get(
-                air_host,
-                api_token,
-                "/api/public/cases",
-                verbose=False,
-            )
-        else:
-            raise
+        raise RuntimeError(
+            "Could not list cases while resolving "
+            f"investigation {investigation_id} with filter[organizationIds]={org_id}: {exc}"
+        ) from exc
     for case in cases:
         metadata = case.get("metadata") or {}
         if metadata.get("investigationId") == investigation_id:
@@ -368,6 +364,7 @@ def compact_asset(asset):
 
 
 def resolve_asset_identifier(air_host, api_token, org_id, identifier):
+    org_id = str(org_id)
     direct_asset = None
     resp = api_get(air_host, api_token, f"/api/public/assets/{identifier}")
     if resp.ok:
@@ -388,16 +385,10 @@ def resolve_asset_identifier(air_host, api_token, org_id, identifier):
             verbose=False,
         )
     except RuntimeError as exc:
-        if str(org_id) == "0" and "organization" in str(exc).lower():
-            search_results = paginate_get(
-                air_host,
-                api_token,
-                "/api/public/assets",
-                params={"search": identifier},
-                verbose=False,
-            )
-        else:
-            raise
+        raise RuntimeError(
+            "Could not search assets for "
+            f"identifier {identifier!r} with filter[organizationIds]={org_id}: {exc}"
+        ) from exc
 
     unique_candidates = []
     seen_asset_ids = set()

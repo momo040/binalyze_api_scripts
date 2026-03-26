@@ -102,6 +102,7 @@ def api_post(air_host, api_token, path, body=None, params=None,
     url = f"{air_host}{path}"
     return _request_with_retry(
         requests.post, url,
-        headers=_headers(api_token), json=body or {}, params=params, timeout=timeout,
+        headers=_headers(api_token), json={} if body is None else body,
+        params=params, timeout=timeout,
         retries=retries,
     )
