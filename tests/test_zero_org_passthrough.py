@@ -61,7 +61,7 @@ class ZeroOrgPassthroughTests(unittest.TestCase):
             [
                 (
                     "/api/public/assets",
-                    {"filter[organizationIds]": "0", "search": "endpoint-1"},
+                    {"filter[organizationIds]": "0", "filter[name]": "endpoint-1"},
                 )
             ],
         )

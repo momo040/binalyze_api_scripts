@@ -379,7 +379,7 @@ def resolve_asset_identifier(air_host, api_token, org_id, identifier):
     org_id = str(org_id)
     params = {
         "filter[organizationIds]": org_id,
-        "search": identifier,
+        "filter[name]": identifier,
     }
     try:
         search_results = paginate_get(
@@ -392,7 +392,7 @@ def resolve_asset_identifier(air_host, api_token, org_id, identifier):
     except RuntimeError as exc:
         raise RuntimeError(
             "Could not search assets for "
-            f"identifier {identifier!r} with filter[organizationIds]={org_id}: {exc}"
+            f"name {identifier!r} with filter[organizationIds]={org_id}: {exc}"
         ) from exc
 
     direct_asset = None

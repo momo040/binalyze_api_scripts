@@ -48,7 +48,7 @@ class AssetNameLookupTests(unittest.TestCase):
                 (
                     "paginate_get",
                     "/api/public/assets",
-                    {"filter[organizationIds]": "0", "search": "HOST-01"},
+                    {"filter[organizationIds]": "0", "filter[name]": "HOST-01"},
                 )
             ],
         )
@@ -90,7 +90,7 @@ class AssetNameLookupTests(unittest.TestCase):
                 (
                     "paginate_get",
                     "/api/public/assets",
-                    {"filter[organizationIds]": "0", "search": "HOST-02"},
+                    {"filter[organizationIds]": "0", "filter[name]": "HOST-02"},
                 )
             ],
         )

@@ -65,7 +65,7 @@ def find_endpoint(air_host, api_token, identifier, org_id):
     org_id = str(org_id)
     params = {
         "filter[organizationIds]": org_id,
-        "search": identifier,
+        "filter[name]": identifier,
     }
     assets = paginate_get(
         air_host, api_token, "/api/public/assets", params=params, verbose=False,
