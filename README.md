@@ -10,6 +10,7 @@ Canonical repository root: `binalyze_api_scripts/`.
 ```
 binalyze_api_scripts/
   .env                        # API credentials (not committed)
+  .venv/                      # Local virtual environment (not committed)
   requirements.txt            # Python dependencies
   CHANGELOG.md                # Release history
   wrkfl_process_analysis.py   # Interactive process analysis workflow
@@ -18,6 +19,7 @@ binalyze_api_scripts/
     runtime.py                # Lazy startup helper and shared repo paths
     pagination.py             # Paginated GET helper
   scripts/                    # Runnable scripts
+    setup_venv.sh
     enumerate_orgs.py
     enumerate_cases.py
     case_findings.py
@@ -36,11 +38,22 @@ binalyze_api_scripts/
 
 ## Setup
 
-1. **Install dependencies:**
+1. **Create a virtual environment and install dependencies:**
    ```bash
+   ./scripts/setup_venv.sh
+   ```
+   This creates `.venv/`, upgrades `pip`, and installs `requirements.txt`.
+2. **Activate the virtual environment:**
+   ```bash
+   source .venv/bin/activate
+   ```
+3. **Manual alternative:**
+   ```bash
+   python3 -m venv .venv
+   source .venv/bin/activate
    pip install -r requirements.txt
    ```
-2. **Configure environment:**
+4. **Configure environment:**
    Create a `.env` file in the project root:
    ```env
    BINALYZE_AIR_HOST=https://your-tenant.binalyze.com
