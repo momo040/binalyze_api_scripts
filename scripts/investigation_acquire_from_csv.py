@@ -491,6 +491,15 @@ def build_validation_progress_message(
     return " ".join(parts)
 
 
+def stdout_supports_live_progress():
+    try:
+        import sys as progress_sys
+
+        return bool(getattr(progress_sys.stdout, "isatty", lambda: False)())
+    except Exception:
+        return False
+
+
 def report_validation_progress(
     processed,
     total,
@@ -511,7 +520,7 @@ def report_validation_progress(
         cache_hits=cache_hits,
     )
 
-    if sys.stdout.isatty():
+    if stdout_supports_live_progress():
         previous_length = getattr(report_validation_progress, "_last_length", 0)
         padded_message = message.ljust(previous_length)
         print(f"\r{padded_message}", end="\n" if final else "", flush=True)

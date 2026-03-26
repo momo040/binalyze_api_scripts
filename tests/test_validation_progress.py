@@ -1,5 +1,7 @@
 import importlib
+import io
 import unittest
+from contextlib import redirect_stdout
 
 
 class ValidationProgressTests(unittest.TestCase):
@@ -47,6 +49,29 @@ class ValidationProgressTests(unittest.TestCase):
         )
 
         self.assertIn("current=AAAAAAAAAAAAAAAAAAAAAAAAAAAAA...", message)
+
+    def test_report_progress_does_not_require_module_level_sys(self):
+        module = importlib.import_module("scripts.investigation_acquire_from_csv")
+        globals_dict = module.report_validation_progress.__globals__
+        original_sys = globals_dict.pop("sys", None)
+
+        try:
+            with redirect_stdout(io.StringIO()) as captured:
+                module.report_validation_progress(
+                    processed=1,
+                    total=1,
+                    status_counts={"matched": 1},
+                    started_at=0,
+                    current_identifier="ddd-d123123",
+                    api_lookups=1,
+                    cache_hits=0,
+                    final=True,
+                )
+        finally:
+            if original_sys is not None:
+                globals_dict["sys"] = original_sys
+
+        self.assertIn("ddd-d123123", captured.getvalue())
 
 
 if __name__ == "__main__":
