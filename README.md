@@ -273,7 +273,7 @@ Key endpoints used:
 
 ## Troubleshooting
 
-**`organizationId(s) is required`** -- The `/api/public/cases` endpoint requires an org ID filter. Always pass `org_id` to scripts that need it, or run `enumerate_orgs.py` first to find yours.
+**`organizationId(s) is required`** -- The `/api/public/cases` endpoint requires a filterable org ID. Some tenants expose a root or display org as `0`, while `/cases` and `/assets` expect a different `organizationId`. Run `enumerate_orgs.py` and use the canonical ID it prints. The acquisition scripts also accept `0` and will now remap it or search across resolved org IDs, printing the org ID they actually use.
 
 **`urllib3 v2 only supports OpenSSL 1.1.1+` warning** -- Harmless on macOS with LibreSSL. The scripts suppress this where possible, but it may still appear. Safe to ignore.
 
