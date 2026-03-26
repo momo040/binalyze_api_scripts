@@ -48,16 +48,21 @@ def validate_org(air_host, api_token, org_id):
     return org
 
 
+def asset_belongs_to_org(asset, org_id):
+    candidates = [
+        asset.get("organizationId"),
+        (asset.get("organization") or {}).get("_id"),
+        (asset.get("organization") or {}).get("id"),
+    ]
+    candidates = [value for value in candidates if value is not None and value != ""]
+    if not candidates:
+        return True
+    return any(str(value) == str(org_id) for value in candidates)
+
+
 def find_endpoint(air_host, api_token, identifier, org_id):
     """Find an endpoint by name or ID. Tries search first, falls back to direct get."""
-    # Try direct ID lookup first
-    resp = api_get(air_host, api_token, f"/api/public/assets/{identifier}")
-    if resp.ok:
-        asset = resp.json().get("result", resp.json())
-        if asset.get("_id"):
-            return asset
-
-    # Search by name
+    org_id = str(org_id)
     params = {
         "filter[organizationIds]": org_id,
         "search": identifier,
@@ -65,6 +70,15 @@ def find_endpoint(air_host, api_token, identifier, org_id):
     assets = paginate_get(
         air_host, api_token, "/api/public/assets", params=params, verbose=False,
     )
+    if not assets:
+        resp = api_get(air_host, api_token, f"/api/public/assets/{identifier}")
+        if resp.ok:
+            asset = resp.json().get("result", resp.json())
+            if (
+                (asset.get("_id") or asset.get("id") or asset.get("assetId"))
+                and asset_belongs_to_org(asset, org_id)
+            ):
+                return asset
     if not assets:
         print(f"Error: No endpoint found matching '{identifier}'", file=sys.stderr)
         sys.exit(1)

@@ -377,13 +377,6 @@ def compact_asset(asset):
 
 def resolve_asset_identifier(air_host, api_token, org_id, identifier):
     org_id = str(org_id)
-    direct_asset = None
-    resp = api_get(air_host, api_token, f"/api/public/assets/{identifier}")
-    if resp.ok:
-        candidate = resp.json().get("result", resp.json())
-        if candidate and asset_id(candidate) and asset_belongs_to_org(candidate, org_id):
-            direct_asset = candidate
-
     params = {
         "filter[organizationIds]": org_id,
         "search": identifier,
@@ -401,6 +394,14 @@ def resolve_asset_identifier(air_host, api_token, org_id, identifier):
             "Could not search assets for "
             f"identifier {identifier!r} with filter[organizationIds]={org_id}: {exc}"
         ) from exc
+
+    direct_asset = None
+    if not search_results:
+        resp = api_get(air_host, api_token, f"/api/public/assets/{identifier}")
+        if resp.ok:
+            candidate = resp.json().get("result", resp.json())
+            if candidate and asset_id(candidate) and asset_belongs_to_org(candidate, org_id):
+                direct_asset = candidate
 
     unique_candidates = []
     seen_asset_ids = set()
