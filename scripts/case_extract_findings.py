@@ -1,0 +1,203 @@
+import argparse
+import json
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from lib.runtime import OUTPUT_DIR, load_api_context
+
+
+api_get = None
+api_post = None
+
+
+def parse_args(argv):
+    parser = argparse.ArgumentParser(
+        description=(
+            "Probe case and Investigation Hub API endpoints to discover what data is "
+            "available for a case."
+        )
+    )
+    parser.add_argument("org_id", help="Organization ID")
+    parser.add_argument("case_id", help="Case ID")
+    return parser.parse_args(argv)
+
+
+def try_get(air_host, api_token, path, params=None):
+    resp = api_get(air_host, api_token, path, params=params)
+    if resp.ok:
+        return resp.json(), resp.status_code
+    return None, resp.status_code
+
+
+def try_post(air_host, api_token, path, body=None):
+    resp = api_post(air_host, api_token, path, body=body or {})
+    if resp.ok:
+        return resp.json(), resp.status_code
+    return None, resp.status_code
+
+
+def get_investigation_id(air_host, api_token, case_id):
+    """Fetch a case and return its investigation ID."""
+    data, _ = try_get(air_host, api_token, f"/api/public/cases/{case_id}")
+    if data is None:
+        return None
+    result = data.get("result", data)
+    return (result.get("metadata") or {}).get("investigationId")
+
+
+def probe_endpoints(air_host, api_token, org_id, case_id, investigation_id):
+    """Probe case and Investigation Hub endpoints, returning those that respond."""
+    endpoints = [
+        (
+            "GET",
+            f"/api/public/cases/{case_id}",
+            {"filter[organizationIds]": org_id},
+        ),
+        (
+            "GET",
+            f"/api/public/cases/{case_id}/endpoints",
+            {"filter[organizationIds]": org_id, "page": 1, "pageSize": 100},
+        ),
+        (
+            "GET",
+            f"/api/public/cases/{case_id}/tasks",
+            {"page": 1, "pageSize": 100},
+        ),
+    ]
+
+    if investigation_id:
+        hub = f"/api/public/investigation-hub/investigations/{investigation_id}"
+        endpoints += [
+            ("GET", f"{hub}/assets", None),
+            ("GET", f"{hub}/evidence/data-structure", None),
+            ("GET", f"{hub}/evidence/counts", None),
+            ("GET", f"{hub}/findings/data-structure", None),
+            ("POST", f"{hub}/findings/summary", None),
+            ("GET", f"{hub}/sections", None),
+        ]
+
+    print(f"Probing {len(endpoints)} endpoints...\n")
+    results = []
+
+    for method, path, params in endpoints:
+        print(f"  {method} {path}", end="", flush=True)
+        if method == "POST":
+            data, status = try_post(air_host, api_token, path)
+        else:
+            data, status = try_get(air_host, api_token, path, params)
+
+        if data is not None:
+            print(f"  -> {status} OK")
+            results.append(
+                {
+                    "method": method,
+                    "endpoint": path,
+                    "data": data,
+                    "status": status,
+                }
+            )
+        else:
+            print(f"  -> {status} Failed")
+
+    return results
+
+
+def display_findings(endpoints_data):
+    if not endpoints_data:
+        print("\nNo successful endpoints found.")
+        print("\nPossible reasons:")
+        print("  1. Your API token may not have permissions")
+        print("  2. The case may not have completed acquisition yet")
+        return
+
+    print(f"\n{'='*80}")
+    print(f"RESULTS: {len(endpoints_data)} endpoint(s) returned data")
+    print(f"{'='*80}")
+
+    for index, info in enumerate(endpoints_data, 1):
+        data = info["data"]
+        print(f"\n[{index}] {info['method']} {info['endpoint']}")
+        print(f"{'─'*80}")
+
+        if not isinstance(data, dict):
+            print(f"  (non-dict response: {type(data).__name__})")
+            continue
+
+        result = data.get("result", data)
+
+        if isinstance(result, dict) and "entities" in result:
+            entities = result["entities"]
+            print(f"  {len(entities)} item(s)")
+            for item_index, entity in enumerate(entities[:3], 1):
+                if isinstance(entity, dict):
+                    preview = {
+                        key: value
+                        for key, value in list(entity.items())[:6]
+                        if value is not None and not str(key).startswith("_")
+                    }
+                    print(f"    [{item_index}] {json.dumps(preview, default=str)[:200]}")
+            if len(entities) > 3:
+                print(f"    ... and {len(entities) - 3} more")
+        elif isinstance(result, list):
+            print(f"  {len(result)} item(s)")
+            for item_index, item in enumerate(result[:3], 1):
+                print(f"    [{item_index}] {json.dumps(item, default=str)[:200]}")
+            if len(result) > 3:
+                print(f"    ... and {len(result) - 3} more")
+        elif isinstance(result, dict):
+            for key in list(result.keys())[:10]:
+                value = result[key]
+                value_str = (
+                    json.dumps(value, default=str)
+                    if isinstance(value, (dict, list))
+                    else str(value)
+                )
+                if len(value_str) > 120:
+                    value_str = value_str[:120] + "..."
+                print(f"    {key}: {value_str}")
+
+    print()
+
+
+def save_to_file(endpoints_data, org_id, case_id):
+    if not endpoints_data:
+        return
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    filename = os.path.join(OUTPUT_DIR, f"findings_org{org_id}_case{case_id}.json")
+    with open(filename, "w", encoding="utf-8") as handle:
+        json.dump(endpoints_data, handle, indent=2, ensure_ascii=False)
+    print(f"Data saved to: {filename}")
+
+
+def main():
+    global api_get, api_post
+
+    args = parse_args(sys.argv[1:])
+
+    try:
+        air_host, api_token, runtime_api_get, runtime_api_post, _ = load_api_context()
+        api_get = runtime_api_get
+        api_post = runtime_api_post
+
+        print(f"Looking up investigation ID for case {args.case_id}...", flush=True)
+        investigation_id = get_investigation_id(air_host, api_token, args.case_id)
+        if investigation_id:
+            print(f"  Investigation ID: {investigation_id}\n")
+        else:
+            print("  No investigation ID found -- skipping Investigation Hub endpoints.\n")
+
+        endpoints_data = probe_endpoints(
+            air_host, api_token, args.org_id, args.case_id, investigation_id
+        )
+        display_findings(endpoints_data)
+        if endpoints_data:
+            save_to_file(endpoints_data, args.org_id, args.case_id)
+    except Exception as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(2)
+
+
+if __name__ == "__main__":
+    main()

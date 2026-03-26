@@ -1,2 +1,277 @@
-# binalyze_api_scripts
-Scripts for Binalyze API
+# Binalyze AIR API Toolkit
+
+**Version:** 0.4.0
+
+Python scripts for interacting with the Binalyze AIR API -- enumerate organizations, cases, and download forensic evidence data.
+Canonical repository root: `binalyze_api_scripts/`.
+
+## Project Structure
+
+```
+binalyze_api_scripts/
+  .env                        # API credentials (not committed)
+  requirements.txt            # Python dependencies
+  CHANGELOG.md                # Release history
+  wrkfl_process_analysis.py   # Interactive process analysis workflow
+  lib/                        # Shared library code
+    api_client.py             # HTTP helpers, auth, retry w/ backoff
+    runtime.py                # Lazy startup helper and shared repo paths
+    pagination.py             # Paginated GET helper
+  scripts/                    # Runnable scripts
+    enumerate_orgs.py
+    enumerate_cases.py
+    case_findings.py
+    case_evidence_structure.py
+    case_download_evidence.py
+    case_extract_findings.py
+    case_acquire.py
+    investigation_acquire_from_csv.py
+  output/                     # Data outputs -- CSV, JSON, SQLite (gitignored)
+  docs/                       # Documentation
+    API_README.md             # API endpoint reference
+    DATA_STRUCTURE.md         # Entity hierarchy and data flow
+    HARDENING.md              # Production hardening notes
+    SCALABILITY.md            # 10k endpoint scale analysis
+```
+
+## Setup
+
+1. **Install dependencies:**
+   ```bash
+   pip install -r requirements.txt
+   ```
+2. **Configure environment:**
+   Create a `.env` file in the project root:
+   ```env
+   BINALYZE_AIR_HOST=https://your-tenant.binalyze.com
+   BINALYZE_API_TOKEN=api_your_token_here
+   BINALYZE_ORG_ID=362          # optional, used by wrkfl_process_analysis.py
+   ```
+
+## Scripts
+
+All scripts are run from the project root.
+
+### enumerate_orgs.py
+
+Lists all organizations in your Binalyze tenant.
+
+```bash
+python3 scripts/enumerate_orgs.py
+```
+
+### enumerate_cases.py
+
+Lists cases for an organization, filtered by status.
+
+```bash
+python3 scripts/enumerate_cases.py <org_id> [status]
+```
+
+- `status` defaults to `open`. Use `closed` for closed cases.
+
+### case_findings.py
+
+Extracts detailed findings (acquisitions, triage tasks) from a case.
+
+```bash
+python3 scripts/case_findings.py <org_id> <case_id>
+```
+
+Output saved to `output/case_findings_<org_id>_<case_id>.json`.
+
+### case_evidence_structure.py
+
+Shows the evidence structure for an investigation, including endpoints, tasks, and collected artifacts.
+
+```bash
+python3 scripts/case_evidence_structure.py <investigation_id> [org_id]
+```
+
+Output saved to `output/evidence_structure_<id>.json`.
+
+### case_download_evidence.py
+
+Downloads parsed evidence data rows from the Investigation Hub (e.g., processes, network connections, event logs). Hardened for large-scale collection with streaming writes, deduplication, resume/checkpoint, and retry with backoff.
+
+```bash
+# List available evidence sections
+python3 scripts/case_download_evidence.py <investigation_id> --list
+
+# Download to SQLite (default) -- streams rows, deduplicates, checkpoints
+python3 scripts/case_download_evidence.py <investigation_id> processes
+
+# Resume an interrupted download (automatic -- uses checkpoint)
+python3 scripts/case_download_evidence.py <investigation_id> processes
+
+# Force fresh download, ignoring checkpoint
+python3 scripts/case_download_evidence.py <investigation_id> processes --no-resume
+
+# Custom DB path, slower request rate
+python3 scripts/case_download_evidence.py <investigation_id> processes --db output/my_case.db --delay 0.5
+
+# CSV/JSON output (in-memory, per-endpoint files)
+python3 scripts/case_download_evidence.py <investigation_id> tcp_table --format csv --limit 100
+```
+
+**SQLite output** goes to `output/evidence.db` (one table per evidence category). **CSV/JSON output** is split per-endpoint into `output/evidence_<category>_<endpoint>.[csv|json]`.
+
+Production features:
+
+- **Streaming writes**: each API page is written to SQLite immediately (memory = O(page_size), not O(total))
+- **Dedup**: unique index on `(air_id, air_task_assignment_id)` with `INSERT OR IGNORE`
+- **Checkpoint**: resume interrupted downloads from last successful page
+- **Retry**: exponential backoff on 429/5xx with `Retry-After` support
+- **Request delay**: configurable `--delay` (default 0.1s) to avoid throttling
+- **ingested_at**: UTC timestamp on every row for time-range queries
+
+### case_extract_findings.py
+
+Probes case and Investigation Hub API endpoints to discover what data is available. Automatically looks up the investigation ID from the case and tests each endpoint, reporting which ones return data.
+
+```bash
+python3 scripts/case_extract_findings.py <org_id> <case_id>
+```
+
+Output saved to `output/findings_org<org_id>_case<case_id>.json`.
+
+### case_acquire.py
+
+Acquires evidence from an endpoint via the API -- the full workflow that replicates clicking through the console: find the endpoint, pick an acquisition profile, create (or reuse) a case, and assign the acquisition task.
+
+```bash
+# Interactive: prompts you to select a profile
+python3 scripts/case_acquire.py <org_id> WORKSTATION-01
+
+# Fully automated: specify profile and poll for completion
+python3 scripts/case_acquire.py <org_id> WORKSTATION-01 --profile-name "Full" --poll
+
+# Attach to an existing case instead of creating a new one
+python3 scripts/case_acquire.py <org_id> WORKSTATION-01 --case-id C-2026-00001
+
+# Preview the API call without sending it
+python3 scripts/case_acquire.py <org_id> WORKSTATION-01 --profile-id abc123 --dry-run
+```
+
+Options:
+
+- `--case-id ID` -- use an existing case (skip creation)
+- `--case-name NAME` -- create a new case with a custom name
+- `--profile-id ID` -- acquisition profile ID (skip interactive selection)
+- `--profile-name NAME` -- find profile by name
+- `--poll` -- poll for task completion after assignment
+- `--poll-interval SECS` -- seconds between status checks (default: 10)
+- `--dry-run` -- show what would be sent without calling assign-task
+
+### investigation_acquire_from_csv.py
+
+Validates assets from a CSV file, resolves them against Binalyze, then launches evidence acquisition only for the assets that exist. The script targets an existing investigation by resolving its backing case, or you can point it directly at a case ID.
+
+```bash
+# Launch acquisitions into an existing investigation using hostnames from a CSV
+python3 scripts/investigation_acquire_from_csv.py 362 assets.csv \
+  --investigation-id INV-123456 \
+  --profile-name "Full"
+
+# Use an existing case directly and specify the CSV column name
+python3 scripts/investigation_acquire_from_csv.py 362 assets.csv \
+  --case-id C-2026-00001 \
+  --column hostname \
+  --profile-id abc123
+
+# Validate everything and preview the API payloads without launching tasks
+python3 scripts/investigation_acquire_from_csv.py 362 assets.csv \
+  --investigation-id INV-123456 \
+  --profile-name "Full" \
+  --dry-run
+```
+
+Expected CSV shape: include a header row and one identifier column such as `asset`, `hostname`, `endpoint`, `name`, `asset_id`, or `id`. Use `--column` if the identifier field has a different name.
+
+Options:
+
+- `--case-id ID` -- existing case ID to attach acquisitions to
+- `--investigation-id ID` -- existing investigation ID; the script resolves the backing case
+- `--column NAME` -- CSV column containing asset names or IDs
+- `--delimiter CHAR` -- CSV delimiter (default: `,`; use `\t` for tab-delimited files)
+- `--profile-id ID` -- acquisition profile ID
+- `--profile-name NAME` -- acquisition profile name
+- `--allow-duplicates` -- launch repeated assets instead of deduplicating them
+- `--poll` -- poll launched tasks until they finish
+- `--poll-interval SECS` -- seconds between poll requests (default: 10)
+- `--dry-run` -- validate and build request bodies without sending API calls
+- `--report PATH` -- optional JSON report path
+
+The script writes a JSON report under `output/` with matched rows, missing assets, ambiguous matches, duplicate skips, and acquisition results.
+
+### wrkfl_process_analysis.py
+
+Interactive workflow that walks through a full process analysis: select a case, download all Windows process data to SQLite, then print frequency analysis (top 10 and bottom 10 processes). The bottom 10 are the hunting gold -- rare processes that may indicate compromise.
+
+Requires `BINALYZE_ORG_ID` in your `.env` file.
+
+```bash
+python3 wrkfl_process_analysis.py
+```
+
+The workflow:
+1. Fetches open cases for your organization
+2. Presents an interactive menu to select a case
+3. Downloads Windows process evidence (streaming to SQLite)
+4. Prints summary: total rows, endpoints, unique process count
+5. Prints top 10 (most common) and bottom 10 (rarest) processes by frequency
+
+Output goes to `output/evidence.db` with a timestamped table per run.
+
+## Typical Workflow
+
+```bash
+# 1. Find your organization
+python3 scripts/enumerate_orgs.py
+
+# 2. List cases in that org
+python3 scripts/enumerate_cases.py 362
+
+# 3. Get the investigation ID from a case, then list available evidence
+python3 scripts/case_download_evidence.py <investigation_id> --list
+
+# 4. Download specific evidence
+python3 scripts/case_download_evidence.py <investigation_id> processes
+```
+
+## API Reference
+
+See [docs/API_README.md](docs/API_README.md) for the full list of Binalyze AIR API endpoints (reverse-engineered from the official TypeScript SDK).
+
+Key endpoints used:
+
+
+| Endpoint                                                                                    | Description             |
+| ------------------------------------------------------------------------------------------- | ----------------------- |
+| `GET /api/public/organizations`                                                             | List organizations      |
+| `GET /api/public/cases`                                                                     | List/filter cases       |
+| `POST /api/public/cases`                                                                    | Create a new case       |
+| `GET /api/public/cases/{id}/tasks`                                                          | Get case tasks          |
+| `GET /api/public/assets`                                                                    | List/search assets      |
+| `GET /api/public/acquisitions/profiles`                                                     | List acq. profiles      |
+| `POST /api/public/acquisitions/assign-task`                                                 | Assign acquisition task |
+| `POST /api/public/investigation-hub/investigations/{id}/sections`                           | List evidence sections  |
+| `POST /api/public/investigation-hub/investigations/{id}/platform/{p}/evidence-category/{c}` | Download evidence data  |
+
+## Troubleshooting
+
+**`organizationId(s) is required`** -- The `/api/public/cases` endpoint requires an org ID filter. Always pass `org_id` to scripts that need it, or run `enumerate_orgs.py` first to find yours.
+
+**`urllib3 v2 only supports OpenSSL 1.1.1+` warning** -- Harmless on macOS with LibreSSL. The scripts suppress this where possible, but it may still appear. Safe to ignore.
+
+**`Set BINALYZE_AIR_HOST and BINALYZE_API_TOKEN in .env`** -- Create a `.env` file in the project root (see Setup above). The scripts search upward from the current directory to find it.
+
+**`Set BINALYZE_ORG_ID in .env`** -- Only `wrkfl_process_analysis.py` requires this. Add your org ID to `.env` (get it from `enumerate_orgs.py`).
+
+**`Investigation Hub API not available on this tenant`** -- The Investigation Hub endpoints returned no data. This can mean: (a) the investigation hasn't finished importing yet, (b) your API token doesn't have Investigation Hub permissions, or (c) the case has no acquisitions.
+
+**Download seems stuck or slow** -- Evidence downloads are throttled by default (`--delay 0.1`). For large cases, this is intentional to avoid rate limiting. If you're confident the API can handle more, use `--delay 0`.
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for the full release history.
