@@ -9,6 +9,7 @@ OUTPUT_DIR = os.path.join(PROJECT_ROOT, "output")
 DEFAULT_DRONE_CONFIG = {
     "autoPilot": False,
     "enabled": False,
+    "mitreEnabled": False,
     "analyzers": ["bha", "wsa", "aa", "ara"],
     "keywords": [],
 }
@@ -155,7 +156,7 @@ def extract_policy_drone_config(policy):
 
     return {
         key: deepcopy(policy[key])
-        for key in ("autoPilot", "enabled", "analyzers", "keywords")
+        for key in ("autoPilot", "enabled", "mitreEnabled", "analyzers", "keywords")
         if key in policy
     }
 
@@ -171,6 +172,14 @@ def filter_disabled_analyzers(analyzers):
     if not isinstance(analyzers, list):
         return analyzers
     return [analyzer for analyzer in analyzers if not should_exclude_analyzer(analyzer)]
+
+
+def force_drone_config_off(drone_config):
+    forced_config = deepcopy(drone_config if isinstance(drone_config, dict) else {})
+    forced_config["enabled"] = False
+    forced_config["mitreEnabled"] = False
+    forced_config["analyzers"] = filter_disabled_analyzers(forced_config.get("analyzers", []))
+    return forced_config
 
 
 def build_acquisition_request(
@@ -189,7 +198,7 @@ def build_acquisition_request(
         DEFAULT_DRONE_CONFIG,
         extract_policy_drone_config(policy_data),
     )
-    drone_config["analyzers"] = filter_disabled_analyzers(drone_config.get("analyzers", []))
+    drone_config = force_drone_config_off(drone_config)
     body = {
         "caseId": case_id,
         "droneConfig": drone_config,

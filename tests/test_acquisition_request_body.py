@@ -21,6 +21,8 @@ class AcquisitionRequestBodyTests(unittest.TestCase):
         )
         self.assertEqual(body["filter"]["organizationIds"], [0])
         self.assertEqual(body["filter"]["policy"], "Containment Policy")
+        self.assertFalse(body["droneConfig"]["enabled"])
+        self.assertFalse(body["droneConfig"]["mitreEnabled"])
         self.assertEqual(body["droneConfig"]["analyzers"], ["bha", "wsa", "aa", "ara"])
         self.assertEqual(body["droneConfig"]["keywords"], [])
         self.assertEqual(body["taskConfig"]["choice"], "use-custom-options")
@@ -58,6 +60,7 @@ class AcquisitionRequestBodyTests(unittest.TestCase):
                     },
                     "droneConfig": {
                         "enabled": True,
+                        "mitreEnabled": True,
                         "keywords": ["keyword-1", "keyword-2"],
                     },
                 },
@@ -76,7 +79,8 @@ class AcquisitionRequestBodyTests(unittest.TestCase):
             body["taskConfig"]["saveTo"]["windows"]["path"],
             "Binalyze\\AIR\\",
         )
-        self.assertTrue(body["droneConfig"]["enabled"])
+        self.assertFalse(body["droneConfig"]["enabled"])
+        self.assertFalse(body["droneConfig"]["mitreEnabled"])
         self.assertEqual(body["droneConfig"]["keywords"], ["keyword-1", "keyword-2"])
         self.assertEqual(body["droneConfig"]["analyzers"], ["bha", "wsa", "aa", "ara"])
 
@@ -89,6 +93,7 @@ class AcquisitionRequestBodyTests(unittest.TestCase):
             policy_data={
                 "droneConfig": {
                     "enabled": True,
+                    "mitreEnabled": True,
                     "analyzers": [
                         "bha",
                         "mitre-attack",
@@ -99,7 +104,8 @@ class AcquisitionRequestBodyTests(unittest.TestCase):
             },
         )
 
-        self.assertTrue(body["droneConfig"]["enabled"])
+        self.assertFalse(body["droneConfig"]["enabled"])
+        self.assertFalse(body["droneConfig"]["mitreEnabled"])
         self.assertEqual(body["droneConfig"]["analyzers"], ["bha", "wsa"])
 
 
