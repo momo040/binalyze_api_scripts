@@ -237,13 +237,25 @@ def resolve_case(air_host, api_token, org_id, case_id=None, investigation_id=Non
     return case
 
 
-def list_profiles(air_host, api_token):
-    return paginate_get(
-        air_host,
-        api_token,
-        "/api/public/acquisitions/profiles",
-        verbose=False,
-    )
+def list_profiles(air_host, api_token, org_id):
+    org_id = str(org_id)
+    params = {
+        "organizationId": org_id,
+        "filter[organizationIds]": org_id,
+    }
+    try:
+        return paginate_get(
+            air_host,
+            api_token,
+            "/api/public/acquisitions/profiles",
+            params=params,
+            verbose=False,
+        )
+    except RuntimeError as exc:
+        raise RuntimeError(
+            "Could not list acquisition profiles with "
+            f"organizationId={org_id}: {exc}"
+        ) from exc
 
 
 def choose_profile_interactively(profiles):
@@ -268,8 +280,8 @@ def choose_profile_interactively(profiles):
         print(f"  Enter a number between 1 and {len(profiles)}.")
 
 
-def resolve_profile(air_host, api_token, profile_id=None, profile_name=None):
-    profiles = list_profiles(air_host, api_token)
+def resolve_profile(air_host, api_token, org_id, profile_id=None, profile_name=None):
+    profiles = list_profiles(air_host, api_token, org_id)
     if not profiles:
         raise RuntimeError("No acquisition profiles found.")
 
@@ -622,6 +634,7 @@ def main():
         profile = resolve_profile(
             air_host,
             api_token,
+            org_id,
             profile_id=args.profile_id,
             profile_name=args.profile_name,
         )

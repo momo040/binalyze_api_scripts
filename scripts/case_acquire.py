@@ -97,15 +97,31 @@ def find_endpoint(air_host, api_token, identifier, org_id):
             print(f"  Enter a number between 1 and {len(assets)}.")
 
 
-def list_profiles(air_host, api_token):
-    return paginate_get(
-        air_host, api_token, "/api/public/acquisitions/profiles", verbose=False,
-    )
+def list_profiles(air_host, api_token, org_id):
+    org_id = str(org_id)
+    params = {
+        "organizationId": org_id,
+        "filter[organizationIds]": org_id,
+    }
+    try:
+        return paginate_get(
+            air_host,
+            api_token,
+            "/api/public/acquisitions/profiles",
+            params=params,
+            verbose=False,
+        )
+    except RuntimeError as exc:
+        print(
+            f"Error: Could not list acquisition profiles with organizationId={org_id}: {exc}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
 
-def resolve_profile(air_host, api_token, profile_id=None, profile_name=None):
+def resolve_profile(air_host, api_token, org_id, profile_id=None, profile_name=None):
     """Find a profile by ID, by name, or let the user pick interactively."""
-    profiles = list_profiles(air_host, api_token)
+    profiles = list_profiles(air_host, api_token, org_id)
     if not profiles:
         print("Error: No acquisition profiles found.", file=sys.stderr)
         sys.exit(1)
@@ -379,6 +395,7 @@ def main():
         print(f"\nResolving acquisition profile...", flush=True)
         profile = resolve_profile(
             air_host, api_token,
+            org_id,
             profile_id=args["profile_id"],
             profile_name=args["profile_name"],
         )
