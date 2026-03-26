@@ -166,6 +166,29 @@ def list_policies(air_host, api_token, org_id):
         sys.exit(1)
 
 
+def get_policy_details(air_host, api_token, org_id, policy):
+    current_policy_id = policy_id(policy)
+    if not current_policy_id:
+        return policy
+
+    resp = api_get(
+        air_host,
+        api_token,
+        f"/api/public/policies/{current_policy_id}",
+        params={"filter[organizationIds]": str(org_id)},
+    )
+    if not resp.ok:
+        return policy
+
+    detailed_policy = resp.json().get("result", resp.json())
+    if not isinstance(detailed_policy, dict):
+        return policy
+
+    merged_policy = dict(policy)
+    merged_policy.update(detailed_policy)
+    return merged_policy
+
+
 def resolve_policy(
     air_host,
     api_token,
@@ -184,13 +207,13 @@ def resolve_policy(
     if policy_id_value:
         for policy in policies:
             if str(policy_id(policy)) == str(policy_id_value):
-                return policy
+                return get_policy_details(air_host, api_token, org_id, policy)
         print(f"Error: No policy found with ID '{policy_id_value}'", file=sys.stderr)
         sys.exit(1)
 
     for policy in policies:
         if policy_name(policy).lower() == policy_name_value.lower():
-            return policy
+            return get_policy_details(air_host, api_token, org_id, policy)
     print(f"Error: No policy found with name '{policy_name_value}'", file=sys.stderr)
     sys.exit(1)
 
@@ -288,6 +311,7 @@ def assign_acquisition(
     profile_id,
     org_id,
     policy="",
+    policy_data=None,
     dry_run=False,
 ):
     """Call POST /acquisitions/acquire. Prints request/response for debugging."""
@@ -297,6 +321,7 @@ def assign_acquisition(
         endpoint_id,
         org_id,
         policy=policy,
+        policy_data=policy_data,
     )
 
     print(f"\n{'─'*70}")
@@ -541,6 +566,7 @@ def main():
             profile_id,
             org_id,
             policy=selected_policy_value,
+            policy_data=selected_policy,
             dry_run=args["dry_run"],
         )
 

@@ -99,17 +99,85 @@ def coerce_identifier_value(value):
     return value
 
 
+def merge_nested_dict(base, override):
+    merged = deepcopy(base)
+    if not isinstance(override, dict):
+        return merged
+    for key, value in override.items():
+        if isinstance(merged.get(key), dict) and isinstance(value, dict):
+            merged[key] = merge_nested_dict(merged[key], value)
+        else:
+            merged[key] = deepcopy(value)
+    return merged
+
+
+def find_nested_dict_value(container, target_key):
+    if not isinstance(container, dict):
+        return None
+
+    direct_value = container.get(target_key)
+    if isinstance(direct_value, dict):
+        return direct_value
+
+    for value in container.values():
+        if not isinstance(value, dict):
+            continue
+        nested_value = find_nested_dict_value(value, target_key)
+        if isinstance(nested_value, dict):
+            return nested_value
+    return None
+
+
+def extract_policy_task_config(policy):
+    if not isinstance(policy, dict):
+        return {}
+
+    task_config = find_nested_dict_value(policy, "taskConfig")
+    if isinstance(task_config, dict):
+        return task_config
+
+    return {
+        key: deepcopy(policy[key])
+        for key in ("choice", "saveTo", "cpu", "compression")
+        if key in policy
+    }
+
+
+def extract_policy_drone_config(policy):
+    if not isinstance(policy, dict):
+        return {}
+
+    drone_config = find_nested_dict_value(policy, "droneConfig")
+    if isinstance(drone_config, dict):
+        return drone_config
+
+    return {
+        key: deepcopy(policy[key])
+        for key in ("autoPilot", "enabled", "analyzers", "keywords")
+        if key in policy
+    }
+
+
 def build_acquisition_request(
     case_id,
     acquisition_profile_id,
     endpoint_id,
     org_id,
     policy="",
+    policy_data=None,
 ):
+    task_config = merge_nested_dict(
+        DEFAULT_TASK_CONFIG,
+        extract_policy_task_config(policy_data),
+    )
+    drone_config = merge_nested_dict(
+        DEFAULT_DRONE_CONFIG,
+        extract_policy_drone_config(policy_data),
+    )
     body = {
         "caseId": case_id,
-        "droneConfig": deepcopy(DEFAULT_DRONE_CONFIG),
-        "taskConfig": deepcopy(DEFAULT_TASK_CONFIG),
+        "droneConfig": drone_config,
+        "taskConfig": task_config,
         "acquisitionProfileId": acquisition_profile_id,
         "filter": deepcopy(DEFAULT_ACQUISITION_FILTER),
     }

@@ -34,6 +34,52 @@ class AcquisitionRequestBodyTests(unittest.TestCase):
         self.assertEqual(body["filter"]["excludedEndpointIds"], [])
         self.assertEqual(body["filter"]["searchTerm"], "")
 
+    def test_merges_policy_task_and_drone_config_into_acquire_body(self):
+        body = build_acquisition_request(
+            case_id="C-2022-0001",
+            acquisition_profile_id="full",
+            endpoint_id="0ccbb181-685c-4f1e-982a-6f7c7e88eadd",
+            org_id="0",
+            policy="Containment Policy",
+            policy_data={
+                "_id": "pol-1",
+                "name": "Containment Policy",
+                "configuration": {
+                    "taskConfig": {
+                        "choice": "use-policy-options",
+                        "cpu": {"limit": 55},
+                        "compression": {
+                            "enabled": False,
+                            "encryption": {
+                                "enabled": True,
+                                "password": "secret",
+                            },
+                        },
+                    },
+                    "droneConfig": {
+                        "enabled": True,
+                        "keywords": ["keyword-1", "keyword-2"],
+                    },
+                },
+            },
+        )
+
+        self.assertEqual(body["taskConfig"]["choice"], "use-policy-options")
+        self.assertEqual(body["taskConfig"]["cpu"]["limit"], 55)
+        self.assertFalse(body["taskConfig"]["compression"]["enabled"])
+        self.assertTrue(body["taskConfig"]["compression"]["encryption"]["enabled"])
+        self.assertEqual(
+            body["taskConfig"]["compression"]["encryption"]["password"],
+            "secret",
+        )
+        self.assertEqual(
+            body["taskConfig"]["saveTo"]["windows"]["path"],
+            "Binalyze\\AIR\\",
+        )
+        self.assertTrue(body["droneConfig"]["enabled"])
+        self.assertEqual(body["droneConfig"]["keywords"], ["keyword-1", "keyword-2"])
+        self.assertEqual(body["droneConfig"]["analyzers"], ["bha", "wsa", "aa", "ara"])
+
 
 if __name__ == "__main__":
     unittest.main()
