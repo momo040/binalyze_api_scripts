@@ -176,6 +176,9 @@ python3 scripts/case_acquire.py <org_id> WORKSTATION-01 --case-id C-2026-00001
 
 # Preview the API call without sending it
 python3 scripts/case_acquire.py <org_id> WORKSTATION-01 --profile-id abc123 --dry-run
+
+# Recall a task launched earlier and optionally poll until it is cancelled
+python3 scripts/case_acquire.py <org_id> --recall-task-id TASK-12345 --poll
 ```
 
 Options:
@@ -186,6 +189,7 @@ Options:
 - `--profile-name NAME` -- find profile by name
 - `--policy-id ID` -- policy ID to stamp into the acquire filter
 - `--policy-name NAME` -- policy name to stamp into the acquire filter
+- `--recall-task-id ID` -- cancel a previously launched acquisition task
 - `--poll` -- poll for task completion after assignment
 - `--poll-interval SECS` -- seconds between status checks (default: 10)
 - `--dry-run` -- show what would be sent without calling `POST /acquisitions/acquire`
@@ -212,6 +216,11 @@ python3 scripts/investigation_acquire_from_csv.py 362 assets.csv \
   --profile-name "Full" \
   --policy-name "Containment Policy" \
   --dry-run
+
+# Recall tasks recorded in a previous bulk acquisition report
+python3 scripts/investigation_acquire_from_csv.py 362 \
+  --recall-report output/bulk_acquire_report_20260326T120000Z.json \
+  --poll
 ```
 
 Expected CSV shape: include a header row and one identifier column such as `asset`, `hostname`, `endpoint`, `name`, `asset_id`, or `id`. Use `--column` if the identifier field has a different name.
@@ -231,8 +240,10 @@ Options:
 - `--poll-interval SECS` -- seconds between poll requests (default: 10)
 - `--dry-run` -- validate and build request bodies without sending API calls
 - `--report PATH` -- optional JSON report path
+- `--recall-report PATH` -- cancel tasks recorded in a previous bulk acquisition report
 
 The script writes a JSON report under `output/` with matched rows, missing assets, ambiguous matches, duplicate skips, and acquisition results.
+Recall mode writes a separate recall report under `output/` unless you pass `--report`.
 
 ### wrkfl_process_analysis.py
 

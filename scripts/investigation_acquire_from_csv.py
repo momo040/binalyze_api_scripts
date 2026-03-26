@@ -71,9 +71,13 @@ def parse_args(argv):
         )
     )
     parser.add_argument("org_id", help="Organization ID")
-    parser.add_argument("csv_path", help="Path to the CSV file with asset identifiers")
+    parser.add_argument(
+        "csv_path",
+        nargs="?",
+        help="Path to the CSV file with asset identifiers",
+    )
 
-    target_group = parser.add_mutually_exclusive_group(required=True)
+    target_group = parser.add_mutually_exclusive_group(required=False)
     target_group.add_argument(
         "--case-id",
         help="Existing case ID to attach acquisitions to",
@@ -139,8 +143,13 @@ def parse_args(argv):
         "--report",
         help="Optional path for the JSON execution report",
     )
+    parser.add_argument(
+        "--recall-report",
+        help="Cancel tasks recorded in a previous bulk acquisition report",
+    )
 
     args = parser.parse_args(argv)
+    validate_mode_args(parser, args)
     args.delimiter = decode_delimiter(args.delimiter)
     return args
 
@@ -150,6 +159,38 @@ def decode_delimiter(value):
     if len(delimiter) != 1:
         raise ValueError(f"Delimiter must be exactly one character, got {value!r}")
     return delimiter
+
+
+def validate_mode_args(parser, args):
+    if args.recall_report:
+        disallowed = []
+        if args.csv_path:
+            disallowed.append("csv_path")
+        for option_name in (
+            "case_id",
+            "investigation_id",
+            "profile_id",
+            "profile_name",
+            "policy_id",
+            "policy_name",
+            "column",
+            "allow_duplicates",
+        ):
+            if getattr(args, option_name):
+                disallowed.append(f"--{option_name.replace('_', '-')}")
+        if disallowed:
+            parser.error(
+                "--recall-report cannot be used with "
+                + ", ".join(disallowed)
+            )
+        return
+
+    if not args.csv_path:
+        parser.error("csv_path is required unless --recall-report is used")
+    if not args.case_id and not args.investigation_id:
+        parser.error(
+            "one of --case-id or --investigation-id is required unless --recall-report is used"
+        )
 
 
 def validate_org(air_host, api_token, org_id):
@@ -724,12 +765,83 @@ def default_report_path():
     return os.path.join(OUTPUT_DIR, f"bulk_acquire_report_{timestamp}.json")
 
 
-def write_report(report, report_path=None):
+def default_recall_report_path():
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    return os.path.join(OUTPUT_DIR, f"bulk_recall_report_{timestamp}.json")
+
+
+def write_report(report, report_path=None, default_path_factory=None):
     os.makedirs(OUTPUT_DIR, exist_ok=True)
-    destination = report_path or default_report_path()
+    destination = report_path or (default_path_factory or default_report_path)()
     with open(destination, "w", encoding="utf-8") as handle:
         json.dump(report, handle, indent=2, sort_keys=True)
     return destination
+
+
+def load_json_file(path):
+    with open(path, "r", encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def collect_recall_targets(report):
+    launches = report.get("launches") or []
+    targets = []
+    seen_task_ids = set()
+
+    for launch in launches:
+        task_id = launch.get("taskId")
+        if not task_id or task_id in seen_task_ids:
+            continue
+        seen_task_ids.add(task_id)
+        targets.append(
+            {
+                "taskId": task_id,
+                "rowNumber": launch.get("rowNumber"),
+                "identifier": launch.get("identifier"),
+                "asset": launch.get("asset"),
+            }
+        )
+
+    return targets
+
+
+def cancel_task(air_host, api_token, task_id, dry_run=False):
+    if dry_run:
+        return {
+            "ok": True,
+            "statusCode": None,
+            "dryRun": True,
+            "responseBody": None,
+        }
+
+    resp = api_post(air_host, api_token, f"/api/public/tasks/{task_id}/cancel")
+    try:
+        response_body = resp.json()
+    except Exception:
+        response_body = {"raw": resp.text[:2000]}
+
+    return {
+        "ok": resp.ok,
+        "statusCode": resp.status_code,
+        "dryRun": False,
+        "responseBody": response_body,
+    }
+
+
+def build_recall_report(args, resolved_org_id, org, source_report_path, source_report):
+    return {
+        "generatedAt": datetime.now(timezone.utc).isoformat(),
+        "sourceReport": os.path.abspath(source_report_path),
+        "org": {
+            "id": org_identity(org) or resolved_org_id,
+            "requestedId": args.org_id,
+            "name": org.get("name", "Unknown"),
+        },
+        "dryRun": args.dry_run,
+        "sourceSummary": source_report.get("summary") or {},
+        "tasks": [],
+        "summary": {},
+    }
 
 
 def print_case_summary(case):
@@ -822,6 +934,83 @@ def main():
         print(f"Organization: {org.get('name', 'Unknown')} ({org_id})")
         if str(org_id) != str(args.org_id):
             print(f"  Requested org_id {args.org_id} resolved to {org_id}")
+
+        if args.recall_report:
+            source_report = load_json_file(args.recall_report)
+            recall_targets = collect_recall_targets(source_report)
+            if not recall_targets:
+                raise RuntimeError(
+                    f"No task IDs found in recall report {os.path.abspath(args.recall_report)}"
+                )
+
+            recall_report = build_recall_report(
+                args,
+                org_id,
+                org,
+                args.recall_report,
+                source_report,
+            )
+            print(f"Recall source:     {os.path.abspath(args.recall_report)}")
+            print(f"Tasks to cancel:   {len(recall_targets)}")
+
+            cancelled_count = 0
+            failed_count = 0
+
+            for index, target in enumerate(recall_targets, 1):
+                asset = target.get("asset") or {}
+                asset_name = asset.get("name") or target.get("identifier") or "Unknown"
+                task_id = target["taskId"]
+                print(f"  [{index}/{len(recall_targets)}] {asset_name} task={task_id}")
+
+                recall_result = cancel_task(
+                    air_host,
+                    api_token,
+                    task_id,
+                    dry_run=args.dry_run,
+                )
+                record = dict(target)
+                record.update(recall_result)
+
+                if recall_result["ok"]:
+                    cancelled_count += 1
+                    if args.dry_run:
+                        print("    Dry run only, no API call sent.")
+                    elif args.poll:
+                        record["pollResult"] = poll_task(
+                            air_host,
+                            api_token,
+                            task_id,
+                            interval=args.poll_interval,
+                        )
+                else:
+                    failed_count += 1
+                    print(
+                        f"    Recall failed with HTTP {recall_result['statusCode']}",
+                        file=sys.stderr,
+                    )
+
+                recall_report["tasks"].append(record)
+
+            recall_report["summary"] = {
+                "tasksFound": len(recall_targets),
+                "successfulRecalls": cancelled_count,
+                "failedRecalls": failed_count,
+            }
+            recall_report_path = write_report(
+                recall_report,
+                args.report,
+                default_path_factory=default_recall_report_path,
+            )
+
+            print()
+            print("Recall summary:")
+            print(f"  Successful recalls: {cancelled_count}")
+            print(f"  Failed recalls:     {failed_count}")
+            print(f"  Report:             {recall_report_path}")
+
+            if failed_count:
+                sys.exit(2)
+            sys.exit(0)
 
         case = resolve_case(
             air_host,
@@ -981,7 +1170,11 @@ def main():
                 "successfulLaunches": 0,
                 "failedLaunches": 0,
             }
-            report_path = write_report(report, args.report)
+            report_path = write_report(
+                report,
+                args.report,
+                default_path_factory=default_report_path,
+            )
             print()
             print(f"No assets were eligible for launch. Report written to {report_path}")
             sys.exit(1)
@@ -1070,7 +1263,11 @@ def main():
             "successfulLaunches": successful_launches,
             "failedLaunches": failed_launches,
         }
-        report_path = write_report(report, args.report)
+        report_path = write_report(
+            report,
+            args.report,
+            default_path_factory=default_report_path,
+        )
 
         print()
         print("Execution summary:")

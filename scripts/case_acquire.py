@@ -353,6 +353,40 @@ def assign_acquisition(
     return resp_body
 
 
+def cancel_task(air_host, api_token, task_id, dry_run=False):
+    """Call POST /tasks/{id}/cancel and print the response."""
+    print(f"\n{'─'*70}")
+    print("RECALL ACQUISITION TASK")
+    print(f"{'─'*70}\n")
+    print(f"  POST /api/public/tasks/{task_id}/cancel")
+
+    if dry_run:
+        print(f"\n  [DRY RUN] Stopping before API call.")
+        return {
+            "ok": True,
+            "statusCode": None,
+            "dryRun": True,
+            "responseBody": None,
+        }
+
+    resp = api_post(air_host, api_token, f"/api/public/tasks/{task_id}/cancel")
+
+    print(f"\n  Response: HTTP {resp.status_code}")
+    try:
+        resp_body = resp.json()
+        print(f"  {json.dumps(resp_body, indent=4)[:2000]}")
+    except Exception:
+        resp_body = {"raw": resp.text[:2000]}
+        print(f"  {resp.text[:2000]}")
+
+    return {
+        "ok": resp.ok,
+        "statusCode": resp.status_code,
+        "dryRun": False,
+        "responseBody": resp_body,
+    }
+
+
 def poll_task(air_host, api_token, task_id, interval=DEFAULT_POLL_INTERVAL):
     """Poll GET /tasks/{id} until the task reaches a terminal state."""
     print(f"\n{'─'*70}")
@@ -391,6 +425,7 @@ def poll_task(air_host, api_token, task_id, interval=DEFAULT_POLL_INTERVAL):
 
 def print_usage():
     print("Usage: python3 scripts/case_acquire.py <org_id> <endpoint_name_or_id> [options]")
+    print("       python3 scripts/case_acquire.py <org_id> --recall-task-id <task_id> [options]")
     print()
     print("Arguments:")
     print("  org_id                Organization ID")
@@ -403,6 +438,7 @@ def print_usage():
     print("  --profile-name NAME   Find acquisition profile by name")
     print("  --policy-id ID        Policy ID to stamp into the acquire filter")
     print("  --policy-name NAME    Policy name to stamp into the acquire filter")
+    print("  --recall-task-id ID   Cancel a previously launched acquisition task")
     print("  --poll                Poll for task completion after assignment")
     print("  --poll-interval SECS  Seconds between status checks (default: 10)")
     print("  --dry-run             Show what would be sent without calling acquisitions/acquire")
@@ -412,6 +448,7 @@ def print_usage():
     print("  python3 scripts/case_acquire.py 362 WORKSTATION-01 --profile-name 'Full' --poll")
     print("  python3 scripts/case_acquire.py 362 WORKSTATION-01 --policy-name 'Containment Policy'")
     print("  python3 scripts/case_acquire.py 362 WORKSTATION-01 --case-id C-2026-00001 --dry-run")
+    print("  python3 scripts/case_acquire.py 362 --recall-task-id TASK-12345 --poll")
 
 
 def parse_args(argv):
@@ -424,6 +461,7 @@ def parse_args(argv):
         "profile_name": None,
         "policy_id": None,
         "policy_name": None,
+        "recall_task_id": None,
         "poll": False,
         "poll_interval": DEFAULT_POLL_INTERVAL,
         "dry_run": False,
@@ -450,6 +488,9 @@ def parse_args(argv):
         elif argv[i] == "--policy-name" and i + 1 < len(argv):
             args["policy_name"] = argv[i + 1]
             i += 2
+        elif argv[i] == "--recall-task-id" and i + 1 < len(argv):
+            args["recall_task_id"] = argv[i + 1]
+            i += 2
         elif argv[i] == "--poll-interval" and i + 1 < len(argv):
             args["poll_interval"] = int(argv[i + 1])
             i += 2
@@ -475,6 +516,28 @@ def parse_args(argv):
         print("Error: Use only one of --policy-id or --policy-name.", file=sys.stderr)
         sys.exit(1)
 
+    if args["recall_task_id"]:
+        if args["endpoint"]:
+            print(
+                "Error: Do not provide endpoint_name_or_id with --recall-task-id.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        for option_name in (
+            "case_id",
+            "case_name",
+            "profile_id",
+            "profile_name",
+            "policy_id",
+            "policy_name",
+        ):
+            if args[option_name]:
+                print(
+                    f"Error: --{option_name.replace('_', '-')} cannot be used with --recall-task-id.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+
     return args
 
 
@@ -487,7 +550,7 @@ def main():
 
     args = parse_args(sys.argv[1:])
 
-    if not args["org_id"] or not args["endpoint"]:
+    if not args["org_id"] or (not args["endpoint"] and not args["recall_task_id"]):
         print_usage()
         sys.exit(1)
 
@@ -509,6 +572,36 @@ def main():
         # Step 1: Validate organization
         print("Validating organization...", flush=True)
         validate_org(air_host, api_token, org_id)
+
+        if args["recall_task_id"]:
+            result = cancel_task(
+                air_host,
+                api_token,
+                args["recall_task_id"],
+                dry_run=args["dry_run"],
+            )
+
+            if args["dry_run"]:
+                print("\nDone (dry run).\n")
+                sys.exit(0)
+
+            if not result["ok"]:
+                print(
+                    f"\nError: task recall failed with HTTP {result['statusCode']}.",
+                    file=sys.stderr,
+                )
+                sys.exit(2)
+
+            if args["poll"]:
+                poll_task(
+                    air_host,
+                    api_token,
+                    args["recall_task_id"],
+                    interval=args["poll_interval"],
+                )
+
+            print("\nDone.\n")
+            sys.exit(0)
 
         # Step 2: Find endpoint
         print(f"\nFinding endpoint '{endpoint_identifier}'...", flush=True)
