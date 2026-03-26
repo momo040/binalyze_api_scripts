@@ -86,10 +86,10 @@ python3 scripts/enumerate_cases.py <org_id> [status]
 
 ### enumerate_policies.py
 
-Lists policies available in the current Binalyze tenant.
+Lists policies available in the current Binalyze tenant for an organization.
 
 ```bash
-python3 scripts/enumerate_policies.py
+python3 scripts/enumerate_policies.py <org_id>
 ```
 
 ### case_findings.py

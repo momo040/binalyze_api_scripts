@@ -287,23 +287,33 @@ def policy_filter_value(policy):
     return str(policy_id(policy) or "")
 
 
-def list_policies(air_host, api_token):
+def list_policies(air_host, api_token, org_id):
+    org_id = str(org_id)
     try:
         return paginate_get(
             air_host,
             api_token,
             "/api/public/policies",
+            params={"filter[organizationIds]": org_id},
             verbose=False,
         )
     except RuntimeError as exc:
-        raise RuntimeError(f"Could not list policies: {exc}") from exc
+        raise RuntimeError(
+            f"Could not list policies with filter[organizationIds]={org_id}: {exc}"
+        ) from exc
 
 
-def resolve_policy(air_host, api_token, policy_id_value=None, policy_name_value=None):
+def resolve_policy(
+    air_host,
+    api_token,
+    org_id,
+    policy_id_value=None,
+    policy_name_value=None,
+):
     if not policy_id_value and not policy_name_value:
         return None
 
-    policies = list_policies(air_host, api_token)
+    policies = list_policies(air_host, api_token, org_id)
     if not policies:
         raise RuntimeError("No policies found.")
 
@@ -719,6 +729,7 @@ def main():
         selected_policy = resolve_policy(
             air_host,
             api_token,
+            org_id,
             policy_id_value=args.policy_id,
             policy_name_value=args.policy_name,
         )

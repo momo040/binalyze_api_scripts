@@ -9,6 +9,7 @@ class PolicyResolutionTests(unittest.TestCase):
 
         def fake_paginate_get(air_host, api_token, path, params=None, verbose=False):
             self.assertEqual(path, "/api/public/policies")
+            self.assertEqual(params, {"filter[organizationIds]": "0"})
             return [
                 {"_id": "pol-1", "name": "Containment Policy"},
                 {"_id": "pol-2", "name": "Triage Policy"},
@@ -19,6 +20,7 @@ class PolicyResolutionTests(unittest.TestCase):
             policy = module.resolve_policy(
                 "host",
                 "token",
+                0,
                 policy_name_value="Containment Policy",
             )
         finally:
@@ -33,6 +35,7 @@ class PolicyResolutionTests(unittest.TestCase):
 
         def fake_paginate_get(air_host, api_token, path, params=None, verbose=False):
             self.assertEqual(path, "/api/public/policies")
+            self.assertEqual(params, {"filter[organizationIds]": "0"})
             return [
                 {"_id": "pol-1", "name": "Containment Policy"},
                 {"_id": "pol-2", "name": "Triage Policy"},
@@ -43,6 +46,7 @@ class PolicyResolutionTests(unittest.TestCase):
             policy = module.resolve_policy(
                 "host",
                 "token",
+                0,
                 policy_id_value="pol-2",
             )
         finally:
