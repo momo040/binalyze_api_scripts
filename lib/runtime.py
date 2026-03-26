@@ -13,6 +13,8 @@ DEFAULT_DRONE_CONFIG = {
     "keywords": [],
 }
 
+DISABLED_DRONE_ANALYZER_TOKENS = ("mitre", "attack", "yara")
+
 DEFAULT_TASK_CONFIG = {
     "choice": "use-custom-options",
     "saveTo": {
@@ -158,6 +160,19 @@ def extract_policy_drone_config(policy):
     }
 
 
+def should_exclude_analyzer(analyzer):
+    if not isinstance(analyzer, str):
+        return False
+    normalized = "".join(character for character in analyzer.lower() if character.isalnum())
+    return any(token in normalized for token in DISABLED_DRONE_ANALYZER_TOKENS)
+
+
+def filter_disabled_analyzers(analyzers):
+    if not isinstance(analyzers, list):
+        return analyzers
+    return [analyzer for analyzer in analyzers if not should_exclude_analyzer(analyzer)]
+
+
 def build_acquisition_request(
     case_id,
     acquisition_profile_id,
@@ -174,6 +189,7 @@ def build_acquisition_request(
         DEFAULT_DRONE_CONFIG,
         extract_policy_drone_config(policy_data),
     )
+    drone_config["analyzers"] = filter_disabled_analyzers(drone_config.get("analyzers", []))
     body = {
         "caseId": case_id,
         "droneConfig": drone_config,

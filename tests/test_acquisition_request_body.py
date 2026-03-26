@@ -80,6 +80,28 @@ class AcquisitionRequestBodyTests(unittest.TestCase):
         self.assertEqual(body["droneConfig"]["keywords"], ["keyword-1", "keyword-2"])
         self.assertEqual(body["droneConfig"]["analyzers"], ["bha", "wsa", "aa", "ara"])
 
+    def test_filters_mitre_attack_analyzers_from_drone_config(self):
+        body = build_acquisition_request(
+            case_id="C-2022-0001",
+            acquisition_profile_id="full",
+            endpoint_id="0ccbb181-685c-4f1e-982a-6f7c7e88eadd",
+            org_id="0",
+            policy_data={
+                "droneConfig": {
+                    "enabled": True,
+                    "analyzers": [
+                        "bha",
+                        "mitre-attack",
+                        "yara-memory",
+                        "wsa",
+                    ],
+                }
+            },
+        )
+
+        self.assertTrue(body["droneConfig"]["enabled"])
+        self.assertEqual(body["droneConfig"]["analyzers"], ["bha", "wsa"])
+
 
 if __name__ == "__main__":
     unittest.main()
