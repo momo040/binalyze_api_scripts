@@ -439,6 +439,89 @@ def load_csv_rows(csv_path, identifier_column=None, delimiter=","):
     return column, rows
 
 
+def format_elapsed(seconds):
+    total_seconds = max(0, int(seconds))
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    if hours:
+        return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+    return f"{minutes:02d}:{seconds:02d}"
+
+
+def shorten_text(value, limit=32):
+    text = str(value or "")
+    if len(text) <= limit:
+        return text
+    if limit <= 3:
+        return text[:limit]
+    return f"{text[:limit - 3]}..."
+
+
+def build_validation_progress_message(
+    processed,
+    total,
+    status_counts,
+    elapsed_seconds,
+    current_identifier,
+    api_lookups,
+    cache_hits,
+):
+    bar_width = 24
+    ratio = 0 if total <= 0 else min(1.0, processed / total)
+    filled = int(bar_width * ratio)
+    if processed and total and filled == 0:
+        filled = 1
+    bar = f"[{'#' * filled}{'-' * (bar_width - filled)}]"
+
+    parts = [
+        "  Validating",
+        bar,
+        f"{processed}/{total}",
+        f"elapsed={format_elapsed(elapsed_seconds)}",
+        f"matched={status_counts.get('matched', 0)}",
+        f"missing={status_counts.get('missing', 0)}",
+        f"ambiguous={status_counts.get('ambiguous', 0)}",
+        f"blank={status_counts.get('blank', 0)}",
+        f"dup={status_counts.get('duplicate_skipped', 0)}",
+        f"lookups={api_lookups}",
+        f"cache={cache_hits}",
+    ]
+    if current_identifier:
+        parts.append(f"current={shorten_text(current_identifier)}")
+    return " ".join(parts)
+
+
+def report_validation_progress(
+    processed,
+    total,
+    status_counts,
+    started_at,
+    current_identifier,
+    api_lookups,
+    cache_hits,
+    final=False,
+):
+    message = build_validation_progress_message(
+        processed=processed,
+        total=total,
+        status_counts=status_counts,
+        elapsed_seconds=time.time() - started_at,
+        current_identifier=current_identifier,
+        api_lookups=api_lookups,
+        cache_hits=cache_hits,
+    )
+
+    if sys.stdout.isatty():
+        previous_length = getattr(report_validation_progress, "_last_length", 0)
+        padded_message = message.ljust(previous_length)
+        print(f"\r{padded_message}", end="\n" if final else "", flush=True)
+        report_validation_progress._last_length = 0 if final else len(message)
+        return
+
+    if final or processed in (1, total) or processed % 25 == 0:
+        print(message, flush=True)
+
+
 def asset_id(asset):
     return asset.get("_id") or asset.get("id") or asset.get("assetId")
 
@@ -772,6 +855,14 @@ def main():
         print(f"CSV file:          {os.path.abspath(args.csv_path)}")
         print(f"Identifier column: {identifier_column}")
         print(f"Rows loaded:       {len(csv_rows)}")
+        unique_identifiers = len(
+            {
+                entry["identifier"]
+                for entry in csv_rows
+                if entry["identifier"]
+            }
+        )
+        print(f"Unique identifiers:{unique_identifiers:>8}")
 
         report = build_report_skeleton(
             args,
@@ -787,10 +878,20 @@ def main():
         resolution_cache = {}
         scheduled_asset_ids = set()
         scheduled = []
+        status_counts = {
+            "matched": 0,
+            "missing": 0,
+            "ambiguous": 0,
+            "blank": 0,
+            "duplicate_skipped": 0,
+        }
+        api_lookups = 0
+        cache_hits = 0
+        validation_started_at = time.time()
 
         print()
         print("Validating CSV assets against Binalyze...")
-        for entry in csv_rows:
+        for index, entry in enumerate(csv_rows, start=1):
             identifier = entry["identifier"]
             row_report = {
                 "rowNumber": entry["rowNumber"],
@@ -801,34 +902,48 @@ def main():
             if not identifier:
                 row_report["status"] = "blank"
                 report["csvRows"].append(row_report)
-                continue
-
-            if identifier not in resolution_cache:
-                resolution_cache[identifier] = resolve_asset_identifier(
-                    air_host,
-                    api_token,
-                    org_id,
-                    identifier,
-                )
-
-            resolution = resolution_cache[identifier]
-            row_report.update(resolution)
-
-            if resolution["status"] == "matched":
-                matched_asset = resolution["asset"]
-                current_asset_id = matched_asset["id"]
-                if not args.allow_duplicates and current_asset_id in scheduled_asset_ids:
-                    row_report["status"] = "duplicate_skipped"
-                else:
-                    scheduled_asset_ids.add(current_asset_id)
-                    scheduled.append(
-                        {
-                            "rowNumber": entry["rowNumber"],
-                            "identifier": identifier,
-                            "asset": matched_asset,
-                        }
+            else:
+                if identifier not in resolution_cache:
+                    api_lookups += 1
+                    resolution_cache[identifier] = resolve_asset_identifier(
+                        air_host,
+                        api_token,
+                        org_id,
+                        identifier,
                     )
-            report["csvRows"].append(row_report)
+                else:
+                    cache_hits += 1
+
+                resolution = resolution_cache[identifier]
+                row_report.update(resolution)
+
+                if resolution["status"] == "matched":
+                    matched_asset = resolution["asset"]
+                    current_asset_id = matched_asset["id"]
+                    if not args.allow_duplicates and current_asset_id in scheduled_asset_ids:
+                        row_report["status"] = "duplicate_skipped"
+                    else:
+                        scheduled_asset_ids.add(current_asset_id)
+                        scheduled.append(
+                            {
+                                "rowNumber": entry["rowNumber"],
+                                "identifier": identifier,
+                                "asset": matched_asset,
+                            }
+                        )
+                report["csvRows"].append(row_report)
+
+            status_counts[row_report["status"]] = status_counts.get(row_report["status"], 0) + 1
+            report_validation_progress(
+                processed=index,
+                total=len(csv_rows),
+                status_counts=status_counts,
+                started_at=validation_started_at,
+                current_identifier=identifier or "<blank>",
+                api_lookups=api_lookups,
+                cache_hits=cache_hits,
+                final=index == len(csv_rows),
+            )
 
         matched_rows = [row for row in report["csvRows"] if row["status"] == "matched"]
         missing_rows = [row for row in report["csvRows"] if row["status"] == "missing"]
