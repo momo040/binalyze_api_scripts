@@ -4,7 +4,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from lib.runtime import load_api_context
+from lib.runtime import display_id, load_api_context
 
 
 paginate_get = None
@@ -57,7 +57,7 @@ def main():
                 created = case.get("createdAt")
                 owner = case.get("owner")
                 metadata = case.get("metadata") or {}
-                investigation_id = metadata.get("investigationId")
+                investigation_id = display_id(metadata.get("investigationId"))
 
                 print(f"\n- Case ID: {case_id}")
                 print(f"  Name: {name}")

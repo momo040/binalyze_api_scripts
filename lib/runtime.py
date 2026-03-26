@@ -6,6 +6,12 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUTPUT_DIR = os.path.join(PROJECT_ROOT, "output")
 
 
+def display_id(value, missing=0):
+    if value is None or value == "":
+        return missing
+    return value
+
+
 @lru_cache(maxsize=1)
 def load_api_runtime():
     try:

@@ -6,7 +6,7 @@ from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from lib.runtime import OUTPUT_DIR, load_api_context
+from lib.runtime import OUTPUT_DIR, display_id, load_api_context
 
 
 api_get = None
@@ -64,10 +64,7 @@ def display_findings(case_details, tasks):
         print(f"Category: {category.get('name', 'N/A')}")
 
     metadata = result.get("metadata", {})
-    if metadata:
-        investigation_id = metadata.get("investigationId")
-        if investigation_id:
-            print(f"Investigation ID: {investigation_id}")
+    print(f"Investigation ID: {display_id(metadata.get('investigationId'))}")
 
     print(f"\n{'-'*80}")
     print(f"FINDINGS & EVIDENCE (Total Tasks: {len(tasks)})")

@@ -21,7 +21,7 @@ from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from lib.runtime import OUTPUT_DIR, load_api_context
+from lib.runtime import OUTPUT_DIR, display_id, load_api_context
 
 DEFAULT_POLL_INTERVAL = 10
 TERMINAL_STATUSES = {"completed", "failed", "cancelled", "error"}
@@ -41,6 +41,21 @@ DEFAULT_IDENTIFIER_COLUMNS = (
 api_get = None
 api_post = None
 paginate_get = None
+
+
+def has_value(value):
+    return value is not None and value != ""
+
+
+def org_identity(org):
+    for candidate in (
+        org.get("_id"),
+        org.get("id"),
+        org.get("organizationId"),
+    ):
+        if has_value(candidate):
+            return candidate
+    return None
 
 
 def parse_args(argv):
@@ -127,20 +142,70 @@ def validate_org(air_host, api_token, org_id):
     resp = api_get(air_host, api_token, f"/api/public/organizations/{org_id}")
     if not resp.ok:
         raise RuntimeError(
-            f"Could not fetch organization {org_id}: HTTP {resp.status_code}"
+            f"Could not fetch organization {org_id}: HTTP {resp.status_code} - {resp.text[:500]}"
         )
     return resp.json().get("result", resp.json())
 
 
-def get_case_by_investigation_id(air_host, api_token, investigation_id, org_id):
-    params = {"filter[organizationIds]": org_id}
-    cases = paginate_get(
+def list_organizations(air_host, api_token):
+    return paginate_get(
         air_host,
         api_token,
-        "/api/public/cases",
-        params=params,
+        "/api/public/organizations",
         verbose=False,
     )
+
+
+def resolve_org(air_host, api_token, requested_org_id):
+    requested_org_id = str(requested_org_id)
+
+    resp = api_get(air_host, api_token, f"/api/public/organizations/{requested_org_id}")
+    if resp.ok:
+        org = resp.json().get("result", resp.json())
+        resolved_org_id = org_identity(org)
+        return org, str(resolved_org_id if has_value(resolved_org_id) else requested_org_id)
+
+    organizations = list_organizations(air_host, api_token)
+    matched = [
+        org
+        for org in organizations
+        if has_value(org_identity(org)) and str(org_identity(org)) == requested_org_id
+    ]
+    if len(matched) == 1:
+        resolved_org_id = org_identity(matched[0])
+        return matched[0], str(resolved_org_id)
+
+    if requested_org_id == "0" and len(organizations) == 1:
+        only_org = organizations[0]
+        resolved_org_id = org_identity(only_org)
+        if has_value(resolved_org_id):
+            return only_org, str(resolved_org_id)
+
+    raise RuntimeError(
+        f"Could not resolve organization {requested_org_id}: HTTP {resp.status_code} - {resp.text[:500]}"
+    )
+
+
+def get_case_by_investigation_id(air_host, api_token, investigation_id, org_id):
+    params = {"filter[organizationIds]": org_id}
+    try:
+        cases = paginate_get(
+            air_host,
+            api_token,
+            "/api/public/cases",
+            params=params,
+            verbose=False,
+        )
+    except RuntimeError as exc:
+        if str(org_id) == "0" and "organization" in str(exc).lower():
+            cases = paginate_get(
+                air_host,
+                api_token,
+                "/api/public/cases",
+                verbose=False,
+            )
+        else:
+            raise
     for case in cases:
         metadata = case.get("metadata") or {}
         if metadata.get("investigationId") == investigation_id:
@@ -169,7 +234,7 @@ def resolve_case(air_host, api_token, org_id, case_id=None, investigation_id=Non
             )
 
     case_org_id = case.get("organizationId")
-    if case_org_id and str(case_org_id) != str(org_id):
+    if has_value(case_org_id) and str(case_org_id) != str(org_id):
         raise RuntimeError(
             f"Case {case.get('_id') or case.get('id')} belongs to org {case_org_id}, not {org_id}"
         )
@@ -286,7 +351,7 @@ def asset_belongs_to_org(asset, org_id):
         (asset.get("organization") or {}).get("_id"),
         (asset.get("organization") or {}).get("id"),
     ]
-    candidates = [value for value in candidates if value]
+    candidates = [value for value in candidates if has_value(value)]
     if not candidates:
         return True
     return any(str(value) == str(org_id) for value in candidates)
@@ -314,13 +379,25 @@ def resolve_asset_identifier(air_host, api_token, org_id, identifier):
         "filter[organizationIds]": org_id,
         "search": identifier,
     }
-    search_results = paginate_get(
-        air_host,
-        api_token,
-        "/api/public/assets",
-        params=params,
-        verbose=False,
-    )
+    try:
+        search_results = paginate_get(
+            air_host,
+            api_token,
+            "/api/public/assets",
+            params=params,
+            verbose=False,
+        )
+    except RuntimeError as exc:
+        if str(org_id) == "0" and "organization" in str(exc).lower():
+            search_results = paginate_get(
+                air_host,
+                api_token,
+                "/api/public/assets",
+                params={"search": identifier},
+                verbose=False,
+            )
+        else:
+            raise
 
     unique_candidates = []
     seen_asset_ids = set()
@@ -469,7 +546,7 @@ def print_case_summary(case):
     print(f"  ID:             {case_id}")
     print(f"  Name:           {case.get('name', 'Unknown')}")
     print(f"  Status:         {case.get('status', 'Unknown')}")
-    print(f"  Investigation:  {investigation_id or 'N/A'}")
+    print(f"  Investigation:  {display_id(investigation_id)}")
 
 
 def print_profile_summary(profile):
@@ -479,7 +556,15 @@ def print_profile_summary(profile):
     print(f"  Name:  {profile.get('name', 'Unknown')}")
 
 
-def build_report_skeleton(args, org, case, profile, identifier_column, csv_path):
+def build_report_skeleton(
+    args,
+    resolved_org_id,
+    org,
+    case,
+    profile,
+    identifier_column,
+    csv_path,
+):
     case_id = case.get("_id") or case.get("id")
     metadata = case.get("metadata") or {}
     profile_id = profile.get("_id") or profile.get("id")
@@ -488,7 +573,8 @@ def build_report_skeleton(args, org, case, profile, identifier_column, csv_path)
         "csvPath": os.path.abspath(csv_path),
         "identifierColumn": identifier_column,
         "org": {
-            "id": org.get("_id") or org.get("id") or args.org_id,
+            "id": org_identity(org) or resolved_org_id,
+            "requestedId": args.org_id,
             "name": org.get("name", "Unknown"),
         },
         "case": {
@@ -526,13 +612,15 @@ def main():
         api_post = runtime_api_post
         paginate_get = runtime_paginate_get
 
-        org = validate_org(air_host, api_token, args.org_id)
-        print(f"Organization: {org.get('name', 'Unknown')} ({args.org_id})")
+        org, org_id = resolve_org(air_host, api_token, args.org_id)
+        print(f"Organization: {org.get('name', 'Unknown')} ({org_id})")
+        if str(org_id) != str(args.org_id):
+            print(f"  Requested org_id {args.org_id} resolved to {org_id}")
 
         case = resolve_case(
             air_host,
             api_token,
-            args.org_id,
+            org_id,
             case_id=args.case_id,
             investigation_id=args.investigation_id,
         )
@@ -560,6 +648,7 @@ def main():
 
         report = build_report_skeleton(
             args,
+            org_id,
             org,
             case,
             profile,
@@ -590,7 +679,7 @@ def main():
                 resolution_cache[identifier] = resolve_asset_identifier(
                     air_host,
                     api_token,
-                    args.org_id,
+                    org_id,
                     identifier,
                 )
 
@@ -672,7 +761,7 @@ def main():
                 launch_result = assign_acquisition_task(
                     air_host,
                     api_token,
-                    args.org_id,
+                    org_id,
                     case_id,
                     profile_id,
                     current_asset_id,

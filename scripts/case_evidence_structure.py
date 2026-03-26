@@ -5,7 +5,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from lib.runtime import OUTPUT_DIR, load_api_context
+from lib.runtime import OUTPUT_DIR, display_id, load_api_context
 
 
 api_get = None
@@ -111,7 +111,7 @@ def display_results(case, tasks, endpoints, hub_results):
     status = case.get("status", "N/A")
     org_id = case.get("organizationId", "N/A")
     metadata = case.get("metadata", {})
-    investigation_id = metadata.get("investigationId", "N/A")
+    investigation_id = display_id(metadata.get("investigationId"))
     disk_usage = metadata.get("diskUsageInBytes", 0)
 
     print(f"Case: {name} ({case_id})")

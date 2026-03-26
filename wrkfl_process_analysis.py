@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from lib.runtime import load_api_context
+from lib.runtime import display_id, load_api_context
 from scripts.case_download_evidence import (
     OUTPUT_DIR,
     build_endpoint_name_map,
@@ -72,7 +72,7 @@ def select_case(cases):
         owner = case.get("owner") or "?"
         created = (case.get("createdAt") or "")[:10]
         metadata = case.get("metadata") or {}
-        investigation_id = metadata.get("investigationId") or "none"
+        investigation_id = display_id(metadata.get("investigationId"))
 
         print(f"  [{index:>3}]  {name}")
         print(
@@ -195,7 +195,7 @@ def main():
             sys.exit(1)
 
         print(f"\n  Selected: {case_name}")
-        print(f"  Investigation ID: {investigation_id}")
+        print(f"  Investigation ID: {display_id(investigation_id)}")
 
         print("\nFetching investigation assets...", flush=True)
         assets_data = get_assets(air_host, api_token, investigation_id)
