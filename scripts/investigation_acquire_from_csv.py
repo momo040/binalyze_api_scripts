@@ -21,7 +21,12 @@ from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from lib.runtime import OUTPUT_DIR, display_id, load_api_context
+from lib.runtime import (
+    OUTPUT_DIR,
+    build_acquisition_request,
+    display_id,
+    load_api_context,
+)
 
 DEFAULT_POLL_INTERVAL = 10
 TERMINAL_STATUSES = {"completed", "failed", "cancelled", "error"}
@@ -119,7 +124,7 @@ def parse_args(argv):
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Validate and show the launch plan without calling assign-task",
+        help="Validate and show the launch plan without calling acquisitions/acquire",
     )
     parser.add_argument(
         "--report",
@@ -455,12 +460,7 @@ def assign_acquisition_task(
     endpoint_id,
     dry_run=False,
 ):
-    body = {
-        "caseId": case_id,
-        "endpointIds": [endpoint_id],
-        "profileId": profile_id,
-        "organizationId": org_id,
-    }
+    body = build_acquisition_request(case_id, profile_id, endpoint_id, org_id)
     if dry_run:
         return {
             "ok": True,
@@ -473,7 +473,7 @@ def assign_acquisition_task(
     resp = api_post(
         air_host,
         api_token,
-        "/api/public/acquisitions/assign-task",
+        "/api/public/acquisitions/acquire",
         body=body,
     )
     try:

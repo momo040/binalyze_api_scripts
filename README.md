@@ -150,7 +150,7 @@ Output saved to `output/findings_org<org_id>_case<case_id>.json`.
 
 ### case_acquire.py
 
-Acquires evidence from an endpoint via the API -- the full workflow that replicates clicking through the console: find the endpoint, pick an acquisition profile, create (or reuse) a case, and assign the acquisition task.
+Acquires evidence from an endpoint via the API -- the full workflow that replicates clicking through the console: find the endpoint, pick an acquisition profile, create (or reuse) a case, and start the acquisition request.
 
 ```bash
 # Interactive: prompts you to select a profile
@@ -174,7 +174,7 @@ Options:
 - `--profile-name NAME` -- find profile by name
 - `--poll` -- poll for task completion after assignment
 - `--poll-interval SECS` -- seconds between status checks (default: 10)
-- `--dry-run` -- show what would be sent without calling assign-task
+- `--dry-run` -- show what would be sent without calling `POST /acquisitions/acquire`
 
 ### investigation_acquire_from_csv.py
 
@@ -267,7 +267,7 @@ Key endpoints used:
 | `GET /api/public/cases/{id}/tasks`                                                          | Get case tasks          |
 | `GET /api/public/assets`                                                                    | List/search assets      |
 | `GET /api/public/acquisitions/profiles`                                                     | List acq. profiles      |
-| `POST /api/public/acquisitions/assign-task`                                                 | Assign acquisition task |
+| `POST /api/public/acquisitions/acquire`                                                     | Start acquisition task  |
 | `POST /api/public/investigation-hub/investigations/{id}/sections`                           | List evidence sections  |
 | `POST /api/public/investigation-hub/investigations/{id}/platform/{p}/evidence-category/{c}` | Download evidence data  |
 

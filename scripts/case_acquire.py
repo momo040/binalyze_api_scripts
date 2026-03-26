@@ -6,12 +6,12 @@ Replicates the console acquisition workflow programmatically:
   2. Find endpoint (asset) by name or ID
   3. Select an acquisition profile
   4. Create or reuse a case
-  5. Assign the acquisition task (POST /acquisitions/assign-task)
+  5. Start the acquisition task (POST /acquisitions/acquire)
   6. Optionally poll until task completes
 
-NOTE: The POST /acquisitions/assign-task request body schema is inferred from
-SDK patterns and may need adjustment. The script prints the full request and
-response bodies to aid debugging. Use --dry-run to preview without sending.
+NOTE: The POST /acquisitions/acquire request body uses the default AIR
+collection policies and prints the full request/response bodies to aid
+debugging. Use --dry-run to preview without sending.
 """
 
 import os
@@ -22,7 +22,7 @@ from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from lib.runtime import load_api_context
+from lib.runtime import build_acquisition_request, load_api_context
 
 
 DEFAULT_POLL_INTERVAL = 10
@@ -214,18 +214,13 @@ def resolve_case(air_host, api_token, org_id, case_id=None, case_name=None,
 
 def assign_acquisition(air_host, api_token, case_id, endpoint_id, profile_id,
                        org_id, dry_run=False):
-    """Call POST /acquisitions/assign-task. Prints request/response for debugging."""
-    body = {
-        "caseId": case_id,
-        "endpointIds": [endpoint_id],
-        "profileId": profile_id,
-        "organizationId": org_id,
-    }
+    """Call POST /acquisitions/acquire. Prints request/response for debugging."""
+    body = build_acquisition_request(case_id, profile_id, endpoint_id, org_id)
 
     print(f"\n{'─'*70}")
     print("ASSIGN ACQUISITION TASK")
     print(f"{'─'*70}\n")
-    print(f"  POST /api/public/acquisitions/assign-task")
+    print(f"  POST /api/public/acquisitions/acquire")
     print(f"  Request body:")
     print(f"  {json.dumps(body, indent=4)}")
 
@@ -233,7 +228,7 @@ def assign_acquisition(air_host, api_token, case_id, endpoint_id, profile_id,
         print(f"\n  [DRY RUN] Stopping before API call.")
         return None
 
-    resp = api_post(air_host, api_token, "/api/public/acquisitions/assign-task", body=body)
+    resp = api_post(air_host, api_token, "/api/public/acquisitions/acquire", body=body)
 
     print(f"\n  Response: HTTP {resp.status_code}")
     try:
@@ -243,9 +238,7 @@ def assign_acquisition(air_host, api_token, case_id, endpoint_id, profile_id,
         print(f"  {resp.text[:2000]}")
 
     if not resp.ok:
-        print(f"\nError: assign-task failed with HTTP {resp.status_code}.", file=sys.stderr)
-        print("The request body schema is a best guess and may need adjustment.",
-              file=sys.stderr)
+        print(f"\nError: acquisition start failed with HTTP {resp.status_code}.", file=sys.stderr)
         print("Check the response above for clues on the expected format.",
               file=sys.stderr)
         sys.exit(1)
@@ -303,7 +296,7 @@ def print_usage():
     print("  --profile-name NAME   Find acquisition profile by name")
     print("  --poll                Poll for task completion after assignment")
     print("  --poll-interval SECS  Seconds between status checks (default: 10)")
-    print("  --dry-run             Show what would be sent without calling assign-task")
+    print("  --dry-run             Show what would be sent without calling acquisitions/acquire")
     print()
     print("Examples:")
     print("  python3 scripts/case_acquire.py 362 WORKSTATION-01")
