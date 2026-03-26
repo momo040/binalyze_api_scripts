@@ -133,6 +133,63 @@ def list_profiles(air_host, api_token, org_id):
         sys.exit(1)
 
 
+def policy_id(policy):
+    return policy.get("_id") or policy.get("id") or policy.get("policyId")
+
+
+def policy_name(policy):
+    return policy.get("name") or policy.get("policyName") or "Unnamed"
+
+
+def policy_filter_value(policy):
+    name = policy.get("name") or policy.get("policyName")
+    if name:
+        return name
+    return str(policy_id(policy) or "")
+
+
+def list_policies(air_host, api_token):
+    try:
+        return paginate_get(
+            air_host,
+            api_token,
+            "/api/public/policies",
+            verbose=False,
+        )
+    except RuntimeError as exc:
+        print(f"Error: Could not list policies: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+
+def resolve_policy(air_host, api_token, policy_id_value=None, policy_name_value=None):
+    if not policy_id_value and not policy_name_value:
+        return None
+
+    policies = list_policies(air_host, api_token)
+    if not policies:
+        print("Error: No policies found.", file=sys.stderr)
+        sys.exit(1)
+
+    if policy_id_value:
+        for policy in policies:
+            if str(policy_id(policy)) == str(policy_id_value):
+                return policy
+        print(f"Error: No policy found with ID '{policy_id_value}'", file=sys.stderr)
+        sys.exit(1)
+
+    for policy in policies:
+        if policy_name(policy).lower() == policy_name_value.lower():
+            return policy
+    print(f"Error: No policy found with name '{policy_name_value}'", file=sys.stderr)
+    sys.exit(1)
+
+
+def print_policy_summary(policy):
+    print("Policy:")
+    print(f"  ID:    {policy_id(policy) or '?'}")
+    print(f"  Name:  {policy_name(policy)}")
+
+
 def resolve_profile(air_host, api_token, org_id, profile_id=None, profile_name=None):
     """Find a profile by ID, by name, or let the user pick interactively."""
     profiles = list_profiles(air_host, api_token, org_id)
@@ -212,10 +269,24 @@ def resolve_case(air_host, api_token, org_id, case_id=None, case_name=None,
     return case
 
 
-def assign_acquisition(air_host, api_token, case_id, endpoint_id, profile_id,
-                       org_id, dry_run=False):
+def assign_acquisition(
+    air_host,
+    api_token,
+    case_id,
+    endpoint_id,
+    profile_id,
+    org_id,
+    policy="",
+    dry_run=False,
+):
     """Call POST /acquisitions/acquire. Prints request/response for debugging."""
-    body = build_acquisition_request(case_id, profile_id, endpoint_id, org_id)
+    body = build_acquisition_request(
+        case_id,
+        profile_id,
+        endpoint_id,
+        org_id,
+        policy=policy,
+    )
 
     print(f"\n{'─'*70}")
     print("ASSIGN ACQUISITION TASK")
@@ -294,6 +365,8 @@ def print_usage():
     print("  --case-name NAME      Create a new case with this name")
     print("  --profile-id ID       Acquisition profile ID (skip interactive selection)")
     print("  --profile-name NAME   Find acquisition profile by name")
+    print("  --policy-id ID        Policy ID to stamp into the acquire filter")
+    print("  --policy-name NAME    Policy name to stamp into the acquire filter")
     print("  --poll                Poll for task completion after assignment")
     print("  --poll-interval SECS  Seconds between status checks (default: 10)")
     print("  --dry-run             Show what would be sent without calling acquisitions/acquire")
@@ -301,6 +374,7 @@ def print_usage():
     print("Examples:")
     print("  python3 scripts/case_acquire.py 362 WORKSTATION-01")
     print("  python3 scripts/case_acquire.py 362 WORKSTATION-01 --profile-name 'Full' --poll")
+    print("  python3 scripts/case_acquire.py 362 WORKSTATION-01 --policy-name 'Containment Policy'")
     print("  python3 scripts/case_acquire.py 362 WORKSTATION-01 --case-id C-2026-00001 --dry-run")
 
 
@@ -312,6 +386,8 @@ def parse_args(argv):
         "case_name": None,
         "profile_id": None,
         "profile_name": None,
+        "policy_id": None,
+        "policy_name": None,
         "poll": False,
         "poll_interval": DEFAULT_POLL_INTERVAL,
         "dry_run": False,
@@ -331,6 +407,12 @@ def parse_args(argv):
             i += 2
         elif argv[i] == "--profile-name" and i + 1 < len(argv):
             args["profile_name"] = argv[i + 1]
+            i += 2
+        elif argv[i] == "--policy-id" and i + 1 < len(argv):
+            args["policy_id"] = argv[i + 1]
+            i += 2
+        elif argv[i] == "--policy-name" and i + 1 < len(argv):
+            args["policy_name"] = argv[i + 1]
             i += 2
         elif argv[i] == "--poll-interval" and i + 1 < len(argv):
             args["poll_interval"] = int(argv[i + 1])
@@ -352,6 +434,10 @@ def parse_args(argv):
         args["org_id"] = positional[0]
     if len(positional) >= 2:
         args["endpoint"] = positional[1]
+
+    if args["policy_id"] and args["policy_name"]:
+        print("Error: Use only one of --policy-id or --policy-name.", file=sys.stderr)
+        sys.exit(1)
 
     return args
 
@@ -410,6 +496,18 @@ def main():
         profile_name = profile.get("name", "Unknown")
         print(f"  Profile: {profile_name} (ID: {profile_id})")
 
+        selected_policy = resolve_policy(
+            air_host,
+            api_token,
+            policy_id_value=args["policy_id"],
+            policy_name_value=args["policy_name"],
+        )
+        selected_policy_value = ""
+        if selected_policy:
+            selected_policy_value = policy_filter_value(selected_policy)
+            print()
+            print_policy_summary(selected_policy)
+
         # Step 4: Resolve case
         print(f"\nResolving case...", flush=True)
         case = resolve_case(
@@ -424,7 +522,13 @@ def main():
 
         # Step 5: Assign acquisition task
         result = assign_acquisition(
-            air_host, api_token, case_id, endpoint_id, profile_id, org_id,
+            air_host,
+            api_token,
+            case_id,
+            endpoint_id,
+            profile_id,
+            org_id,
+            policy=selected_policy_value,
             dry_run=args["dry_run"],
         )
 

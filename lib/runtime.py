@@ -99,7 +99,13 @@ def coerce_identifier_value(value):
     return value
 
 
-def build_acquisition_request(case_id, acquisition_profile_id, endpoint_id, org_id):
+def build_acquisition_request(
+    case_id,
+    acquisition_profile_id,
+    endpoint_id,
+    org_id,
+    policy="",
+):
     body = {
         "caseId": case_id,
         "droneConfig": deepcopy(DEFAULT_DRONE_CONFIG),
@@ -107,6 +113,7 @@ def build_acquisition_request(case_id, acquisition_profile_id, endpoint_id, org_
         "acquisitionProfileId": acquisition_profile_id,
         "filter": deepcopy(DEFAULT_ACQUISITION_FILTER),
     }
+    body["filter"]["policy"] = "" if policy is None else str(policy)
     body["filter"]["includedEndpointIds"] = [endpoint_id]
     body["filter"]["organizationIds"] = [coerce_identifier_value(org_id)]
     return body

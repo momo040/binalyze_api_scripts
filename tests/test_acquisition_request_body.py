@@ -10,6 +10,7 @@ class AcquisitionRequestBodyTests(unittest.TestCase):
             acquisition_profile_id="full",
             endpoint_id="0ccbb181-685c-4f1e-982a-6f7c7e88eadd",
             org_id="0",
+            policy="Containment Policy",
         )
 
         self.assertEqual(body["caseId"], "C-2022-0001")
@@ -19,6 +20,7 @@ class AcquisitionRequestBodyTests(unittest.TestCase):
             ["0ccbb181-685c-4f1e-982a-6f7c7e88eadd"],
         )
         self.assertEqual(body["filter"]["organizationIds"], [0])
+        self.assertEqual(body["filter"]["policy"], "Containment Policy")
         self.assertEqual(body["droneConfig"]["analyzers"], ["bha", "wsa", "aa", "ara"])
         self.assertEqual(body["droneConfig"]["keywords"], [])
         self.assertEqual(body["taskConfig"]["choice"], "use-custom-options")

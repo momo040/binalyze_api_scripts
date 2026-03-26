@@ -92,6 +92,15 @@ def parse_args(argv):
         "--profile-name",
         help="Acquisition profile name",
     )
+    policy_group = parser.add_mutually_exclusive_group()
+    policy_group.add_argument(
+        "--policy-id",
+        help="Policy ID to stamp into the acquire filter",
+    )
+    policy_group.add_argument(
+        "--policy-name",
+        help="Policy name to stamp into the acquire filter",
+    )
 
     parser.add_argument(
         "--column",
@@ -261,6 +270,53 @@ def list_profiles(air_host, api_token, org_id):
             "Could not list acquisition profiles with "
             f"organizationId={org_id}: {exc}"
         ) from exc
+
+
+def policy_id(policy):
+    return policy.get("_id") or policy.get("id") or policy.get("policyId")
+
+
+def policy_name(policy):
+    return policy.get("name") or policy.get("policyName") or "Unnamed"
+
+
+def policy_filter_value(policy):
+    name = policy.get("name") or policy.get("policyName")
+    if name:
+        return name
+    return str(policy_id(policy) or "")
+
+
+def list_policies(air_host, api_token):
+    try:
+        return paginate_get(
+            air_host,
+            api_token,
+            "/api/public/policies",
+            verbose=False,
+        )
+    except RuntimeError as exc:
+        raise RuntimeError(f"Could not list policies: {exc}") from exc
+
+
+def resolve_policy(air_host, api_token, policy_id_value=None, policy_name_value=None):
+    if not policy_id_value and not policy_name_value:
+        return None
+
+    policies = list_policies(air_host, api_token)
+    if not policies:
+        raise RuntimeError("No policies found.")
+
+    if policy_id_value:
+        for policy in policies:
+            if str(policy_id(policy)) == str(policy_id_value):
+                return policy
+        raise RuntimeError(f"No policy found with ID {policy_id_value!r}")
+
+    for policy in policies:
+        if policy_name(policy).lower() == policy_name_value.lower():
+            return policy
+    raise RuntimeError(f"No policy found with name {policy_name_value!r}")
 
 
 def choose_profile_interactively(profiles):
@@ -458,9 +514,16 @@ def assign_acquisition_task(
     case_id,
     profile_id,
     endpoint_id,
+    policy="",
     dry_run=False,
 ):
-    body = build_acquisition_request(case_id, profile_id, endpoint_id, org_id)
+    body = build_acquisition_request(
+        case_id,
+        profile_id,
+        endpoint_id,
+        org_id,
+        policy=policy,
+    )
     if dry_run:
         return {
             "ok": True,
@@ -560,12 +623,19 @@ def print_profile_summary(profile):
     print(f"  Name:  {profile.get('name', 'Unknown')}")
 
 
+def print_policy_summary(policy):
+    print("Policy:")
+    print(f"  ID:    {policy_id(policy) or '?'}")
+    print(f"  Name:  {policy_name(policy)}")
+
+
 def build_report_skeleton(
     args,
     resolved_org_id,
     org,
     case,
     profile,
+    policy,
     identifier_column,
     csv_path,
 ):
@@ -590,6 +660,11 @@ def build_report_skeleton(
         "profile": {
             "id": profile_id,
             "name": profile.get("name"),
+        },
+        "policy": {
+            "id": policy_id(policy) if policy else None,
+            "name": policy_name(policy) if policy else None,
+            "value": policy_filter_value(policy) if policy else "",
         },
         "dryRun": args.dry_run,
         "allowDuplicates": args.allow_duplicates,
@@ -641,6 +716,17 @@ def main():
         )
         print_profile_summary(profile)
 
+        selected_policy = resolve_policy(
+            air_host,
+            api_token,
+            policy_id_value=args.policy_id,
+            policy_name_value=args.policy_name,
+        )
+        selected_policy_value = ""
+        if selected_policy:
+            print_policy_summary(selected_policy)
+            selected_policy_value = policy_filter_value(selected_policy)
+
         identifier_column, csv_rows = load_csv_rows(
             args.csv_path,
             identifier_column=args.column,
@@ -657,6 +743,7 @@ def main():
             org,
             case,
             profile,
+            selected_policy,
             identifier_column,
             args.csv_path,
         )
@@ -770,6 +857,7 @@ def main():
                     case_id,
                     profile_id,
                     current_asset_id,
+                    policy=selected_policy_value,
                     dry_run=args.dry_run,
                 )
                 launch_record.update(launch_result)

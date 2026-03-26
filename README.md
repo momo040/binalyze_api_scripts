@@ -21,6 +21,7 @@ binalyze_api_scripts/
   scripts/                    # Runnable scripts
     setup_venv.sh
     enumerate_orgs.py
+    enumerate_policies.py
     enumerate_cases.py
     case_findings.py
     case_evidence_structure.py
@@ -82,6 +83,14 @@ python3 scripts/enumerate_cases.py <org_id> [status]
 ```
 
 - `status` defaults to `open`. Use `closed` for closed cases.
+
+### enumerate_policies.py
+
+Lists policies available in the current Binalyze tenant.
+
+```bash
+python3 scripts/enumerate_policies.py
+```
 
 ### case_findings.py
 
@@ -159,6 +168,9 @@ python3 scripts/case_acquire.py <org_id> WORKSTATION-01
 # Fully automated: specify profile and poll for completion
 python3 scripts/case_acquire.py <org_id> WORKSTATION-01 --profile-name "Full" --poll
 
+# Apply a named policy to the acquire request
+python3 scripts/case_acquire.py <org_id> WORKSTATION-01 --policy-name "Containment Policy"
+
 # Attach to an existing case instead of creating a new one
 python3 scripts/case_acquire.py <org_id> WORKSTATION-01 --case-id C-2026-00001
 
@@ -172,6 +184,8 @@ Options:
 - `--case-name NAME` -- create a new case with a custom name
 - `--profile-id ID` -- acquisition profile ID (skip interactive selection)
 - `--profile-name NAME` -- find profile by name
+- `--policy-id ID` -- policy ID to stamp into the acquire filter
+- `--policy-name NAME` -- policy name to stamp into the acquire filter
 - `--poll` -- poll for task completion after assignment
 - `--poll-interval SECS` -- seconds between status checks (default: 10)
 - `--dry-run` -- show what would be sent without calling `POST /acquisitions/acquire`
@@ -196,6 +210,7 @@ python3 scripts/investigation_acquire_from_csv.py 362 assets.csv \
 python3 scripts/investigation_acquire_from_csv.py 362 assets.csv \
   --investigation-id INV-123456 \
   --profile-name "Full" \
+  --policy-name "Containment Policy" \
   --dry-run
 ```
 
@@ -209,6 +224,8 @@ Options:
 - `--delimiter CHAR` -- CSV delimiter (default: `,`; use `\t` for tab-delimited files)
 - `--profile-id ID` -- acquisition profile ID
 - `--profile-name NAME` -- acquisition profile name
+- `--policy-id ID` -- policy ID to stamp into the acquire filter
+- `--policy-name NAME` -- policy name to stamp into the acquire filter
 - `--allow-duplicates` -- launch repeated assets instead of deduplicating them
 - `--poll` -- poll launched tasks until they finish
 - `--poll-interval SECS` -- seconds between poll requests (default: 10)
@@ -267,6 +284,7 @@ Key endpoints used:
 | `GET /api/public/cases/{id}/tasks`                                                          | Get case tasks          |
 | `GET /api/public/assets`                                                                    | List/search assets      |
 | `GET /api/public/acquisitions/profiles`                                                     | List acq. profiles      |
+| `GET /api/public/policies`                                                                  | List policies           |
 | `POST /api/public/acquisitions/acquire`                                                     | Start acquisition task  |
 | `POST /api/public/investigation-hub/investigations/{id}/sections`                           | List evidence sections  |
 | `POST /api/public/investigation-hub/investigations/{id}/platform/{p}/evidence-category/{c}` | Download evidence data  |
