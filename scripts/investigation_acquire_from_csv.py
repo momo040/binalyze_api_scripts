@@ -429,9 +429,10 @@ def resolve_profile(air_host, api_token, org_id, profile_id=None, profile_name=N
 
     if profile_name:
         for profile in profiles:
-            if (profile.get("name") or "").lower() == profile_name.lower():
+            current_id = profile.get("_id") or profile.get("id")
+            if (profile.get("name") or "").lower() == profile_name.lower() or str(current_id or "").lower() == profile_name.lower():
                 return profile
-        raise RuntimeError(f"No profile found with name {profile_name!r}")
+        raise RuntimeError(f"No profile found with name or ID {profile_name!r}")
 
     return choose_profile_interactively(profiles)
 

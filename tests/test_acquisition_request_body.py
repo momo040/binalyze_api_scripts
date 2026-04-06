@@ -79,8 +79,8 @@ class AcquisitionRequestBodyTests(unittest.TestCase):
             body["taskConfig"]["saveTo"]["windows"]["path"],
             "Binalyze\\AIR\\",
         )
-        self.assertFalse(body["droneConfig"]["enabled"])
-        self.assertFalse(body["droneConfig"]["mitreEnabled"])
+        self.assertTrue(body["droneConfig"]["enabled"])
+        self.assertTrue(body["droneConfig"]["mitreEnabled"])
         self.assertEqual(body["droneConfig"]["keywords"], ["keyword-1", "keyword-2"])
         self.assertEqual(body["droneConfig"]["analyzers"], ["bha", "wsa", "aa", "ara"])
 
@@ -104,9 +104,9 @@ class AcquisitionRequestBodyTests(unittest.TestCase):
             },
         )
 
-        self.assertFalse(body["droneConfig"]["enabled"])
-        self.assertFalse(body["droneConfig"]["mitreEnabled"])
-        self.assertEqual(body["droneConfig"]["analyzers"], ["bha", "wsa"])
+        self.assertTrue(body["droneConfig"]["enabled"])
+        self.assertTrue(body["droneConfig"]["mitreEnabled"])
+        self.assertEqual(body["droneConfig"]["analyzers"], ["bha", "mitre-attack", "wsa"])
 
 
 if __name__ == "__main__":

@@ -14,7 +14,7 @@ DEFAULT_DRONE_CONFIG = {
     "keywords": [],
 }
 
-DISABLED_DRONE_ANALYZER_TOKENS = ("mitre", "attack", "yara")
+DISABLED_DRONE_ANALYZER_TOKENS = ("yara",)
 
 DEFAULT_TASK_CONFIG = {
     "choice": "use-custom-options",
@@ -176,8 +176,11 @@ def filter_disabled_analyzers(analyzers):
 
 def force_drone_config_off(drone_config):
     forced_config = deepcopy(drone_config if isinstance(drone_config, dict) else {})
-    forced_config["enabled"] = False
-    forced_config["mitreEnabled"] = False
+    # Preserve enabled and mitreEnabled if they are already True
+    if not forced_config.get("enabled", False):
+        forced_config["enabled"] = False
+    if not forced_config.get("mitreEnabled", False):
+        forced_config["mitreEnabled"] = False
     forced_config["analyzers"] = filter_disabled_analyzers(forced_config.get("analyzers", []))
     return forced_config
 
